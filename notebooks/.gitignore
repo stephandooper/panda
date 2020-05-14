@@ -1,0 +1,3 @@
+# Exclude hdf5 and tf files
+
+*.h5

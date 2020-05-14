@@ -1,0 +1,7 @@
+TODO
+1. QWK metric
+2. QWK loss (this can apparantly be done, but I am no fan of this).
+3. Create a more general and flexible input pipeline, that decodes from any .tiff levels to general concat tile pooling sizes on the fly.
+4. Clean up repo
+5. Incorporate tensorboard and save weights routine
+6. Proper references in docs
