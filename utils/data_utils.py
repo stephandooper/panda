@@ -71,7 +71,7 @@ class PandasDataLoader(object):
         self.image_df = pd.read_csv(images_csv_path)
         shape_img = self.image_df.shape
         
-        # image ids without masks are included in skip csv    
+        # image ids without masks are included in skip csv
         if skip_csv is not None:
             skip_df = pd.read_csv(skip_csv)
             shape_skip = skip_df.shape
@@ -131,14 +131,14 @@ class PandasDataLoader(object):
                                  shuffle=True)
         splits = list(splits.split(df, df.isup_grade))
         folds_splits = np.zeros(len(df)).astype(np.int)
-        for i in range(nfolds): 
+        for i in range(nfolds):
             folds_splits[splits[i][1]] = i
         df['split'] = folds_splits
         return df
     
     
     def stratified_isup_sample(self, nfolds, SEED):
-        """ Stratified split on isup categories
+        """ Stratified split on isup categories.
         
         Parameters
         ----------
@@ -419,7 +419,7 @@ class PNGTileGenerator(object):
         
         # shuffle before map (list of filenames is more efficient)
         if mode == 'training':
-            ds = self.image_ids.shuffle(shuffle_buffer_size)
+            ds = self.image_ids.shuffle(shuffle_buffer_size, seed=1)
         else:
             print("skipping shuffling operations in validation generator")
             ds = self.image_ids
