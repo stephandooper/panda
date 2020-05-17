@@ -27,6 +27,7 @@ from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow_addons.metrics import CohenKappa
 
 import pandas as pd
+import os
 
 import sys
 sys.path.insert(0, '..')
@@ -98,7 +99,8 @@ class Network(object):
               custom_metrics=[],
               custom_loss=None,
               custom_optimizer=None,
-              save_weights_name='weights.h5',
+              save_weights_name='best_weights.h5',
+              tb_logdir="./",
               **kwargs):
         """ Train the model.
 
@@ -132,6 +134,8 @@ class Network(object):
             Custom optimizer, must be supported by Keras. The default is None.
         save_weights_name : string, optional
             The name of the weights file. The default is 'weights.h5'.
+        tb_logdir : string
+            The location of the tensorboard logs
         **kwargs : kwargs
             other keyworded arguments, currently unused.
 
@@ -164,17 +168,31 @@ class Network(object):
         
         # Save based on loss
         # TODO: fill in
-        ckp_best_loss = ModelCheckpoint()
+        root, ext = os.path.splitext(save_weights_name)
+        ckp_best_loss = ModelCheckpoint(filepath=root + "_bestLoss" + ext,
+                                        monitor='val_loss',
+                                        verbose=0,
+                                        save_best_only=True,
+                                        save_weights_only=True)
         
         # Save based on metric
         # TODO: fill in
-        ckp_best_metric = ModelCheckpoint()
+        ckp_best_metric = ModelCheckpoint(filepath=root + "_bestQWK" + ext,
+                                        monitor='val_cohen_kappa',
+                                        verbose=1,
+                                        save_best_only=True,
+                                        mode='max',
+                                        save_weights_only=True)
         
         # TODO: add early stopping?
         
         # Tensorboard instance for tracking metrics and progress
         # TODO: configure
-        tensorboard = TensorBoard()
+        tensorboard = TensorBoard(log_dir=tb_logdir,
+                                     histogram_freq=0,
+                                     # write_batch_performance=True,
+                                     write_graph=True,
+                                     write_images=False)
         
         if not isinstance(custom_callbacks, list):
             custom_callbacks = [custom_callbacks]
@@ -209,8 +227,8 @@ class Network(object):
         self._model.fit(x=dataset,
                         epochs=epochs,
                         validation_data=val_dataset,
-                        validation_steps=validation_steps, 
-                        steps_per_epoch=steps_per_epoch,
+                        #validation_steps=validation_steps, 
+                        #steps_per_epoch=steps_per_epoch,
                         callbacks=callbacks)
         
     

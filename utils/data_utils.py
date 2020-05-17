@@ -11,6 +11,7 @@ from sklearn.model_selection import StratifiedKFold
 import pandas as pd
 import numpy as np
 
+
 # TODO: augmentation
 # TODO: preprocess (1- img values for black background, (img-mean)/std)
 # TODO: TiffTileGenerator for test sets and immediate image generation
@@ -442,8 +443,8 @@ class PNGTileGenerator(object):
         # TODO: map2: augmentations and other operations (random)
         
         # Repeat forever (only in training)
-        if mode == 'training':
-            ds = ds.repeat()
+        #if mode == 'training':
+        #    ds = ds.repeat()
 
         # `prefetch` lets the dataset fetch batches in the background
         # while the model is training.
