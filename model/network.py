@@ -21,16 +21,16 @@ that takes as its arguments:
 
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import (ModelCheckpoint, EarlyStopping,
-                                        TensorBoard)
+from tensorflow.keras.callbacks import (ModelCheckpoint, TensorBoard)
 from tensorflow.keras.losses import CategoricalCrossentropy
 from tensorflow_addons.metrics import CohenKappa
 
-import pandas as pd
 import os
+import datetime
 
 import sys
 sys.path.insert(0, '..')
+from model.callbacks import CMCallback
 
 
 class Network(object):
@@ -95,10 +95,10 @@ class Network(object):
               num_classes=6,
               sparse_labels=False,
               regression=False,
-              custom_callbacks=[],
               custom_metrics=[],
-              custom_loss=None,
+              custom_callbacks=[],
               custom_optimizer=None,
+              custom_loss=None,
               save_weights_name='best_weights.h5',
               tb_logdir="./",
               **kwargs):
@@ -122,16 +122,16 @@ class Network(object):
         regression : bool, optional
             If the neural network is a regression framework. If True, then the
             final layer can only have 1 unit. The default is False.
+        custom_metrics : list, optional
+            A list of metrics that can be passed to Keras. The default is [].
         custom_callbacks : list, optional
             A list of keras callbacks, custom written callbacks are also
             supported, as long as they inherit from Callback.
             The default is [].
-        custom_metrics : list, optional
-            A list of metrics that can be passed to Keras. The default is [].
-        custom_loss : Loss object, optional
-            A Keras (Tensorflow) loss object. The default is None.
         custom_optimizer : A (Tensorflow) Keras optimizer, optional
             Custom optimizer, must be supported by Keras. The default is None.
+        custom_loss : Loss object, optional
+            A Keras (Tensorflow) loss object. The default is None.
         save_weights_name : string, optional
             The name of the weights file. The default is 'weights.h5'.
         tb_logdir : string
@@ -163,11 +163,8 @@ class Network(object):
         # ---------------------------
         # Callbacks
         # ---------------------------
-        
-        # TODO: file name splitting and adding
-        
+                
         # Save based on loss
-        # TODO: fill in
         root, ext = os.path.splitext(save_weights_name)
         ckp_best_loss = ModelCheckpoint(filepath=root + "_bestLoss" + ext,
                                         monitor='val_loss',
@@ -176,41 +173,50 @@ class Network(object):
                                         save_weights_only=True)
         
         # Save based on metric
-        # TODO: fill in
         ckp_best_metric = ModelCheckpoint(filepath=root + "_bestQWK" + ext,
-                                        monitor='val_cohen_kappa',
-                                        verbose=1,
-                                        save_best_only=True,
-                                        mode='max',
-                                        save_weights_only=True)
-        
+                                          monitor='val_cohen_kappa',
+                                          verbose=1,
+                                          save_best_only=True,
+                                          mode='max',
+                                          save_weights_only=True)
+    
         # TODO: add early stopping?
         
         # Tensorboard instance for tracking metrics and progress
-        # TODO: configure
-        tensorboard = TensorBoard(log_dir=tb_logdir,
-                                     histogram_freq=0,
-                                     # write_batch_performance=True,
-                                     write_graph=True,
-                                     write_images=False)
+        now = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # Add a tensorflow summary for confusion matrices
+        writer = tf.summary.create_file_writer(tb_logdir + '/' + now)
+
+        # Confusion matrix callback
+        cm_cb = CMCallback(val_dataset, file_writer=writer)
+
+        tensorboard = TensorBoard(log_dir=tb_logdir + '/' + now,
+                                  histogram_freq=0,
+                                  # write_batch_performance=True,
+                                  write_graph=True,
+                                  write_images=False,
+                                  profile_batch=0)
         
         if not isinstance(custom_callbacks, list):
             custom_callbacks = [custom_callbacks]
         
-        callbacks = [ckp_best_loss, ckp_best_metric, tensorboard] + \
+        callbacks = [ckp_best_loss, ckp_best_metric, tensorboard, cm_cb] + \
             custom_callbacks
             
         # ---------------------------
         # Compile model
         # ---------------------------
         
-        # TODO: lr args
-        # TODO: control flow
-        optimizer = Adam(lr=1e-4)
+        if custom_optimizer is None:
+            optimizer = Adam(lr=1e-4)
+        else:
+            optimizer = custom_optimizer
         
-        # TODO: fill in
-        # TODO: control flow
-        loss = CategoricalCrossentropy()
+        if custom_loss is None:
+            loss = CategoricalCrossentropy()
+        else:
+            loss = custom_loss
 
         self._model.compile(loss=loss,
                             optimizer=optimizer,
@@ -227,11 +233,8 @@ class Network(object):
         self._model.fit(x=dataset,
                         epochs=epochs,
                         validation_data=val_dataset,
-                        #validation_steps=validation_steps, 
-                        #steps_per_epoch=steps_per_epoch,
                         callbacks=callbacks)
         
-    
     def make_test_submission(dataset, **kwargs):
         """ Create test submissions for Kaggle PANDA.
         
