@@ -9,6 +9,7 @@ import tensorflow as tf
 import numpy as np
 import random
 import os
+import imgaug as ia
 
 # TODO: set_seed function
 # TO
@@ -24,6 +25,9 @@ def seed_all(SEED=2020):
     tf.random.set_seed(SEED)
     
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    
+    ia.seed(SEED)
+
 
 
 def set_gpu_memory(num_gpu=1, device_type='GPU'):

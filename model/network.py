@@ -235,19 +235,29 @@ class Network(object):
                         validation_data=val_dataset,
                         callbacks=callbacks)
         
-    def make_test_submission(dataset, **kwargs):
-        """ Create test submissions for Kaggle PANDA.
-        
+    def predict(self, x, **kwargs):
+        """ Predict wrapper, is the same as Tf keras
+
         Parameters
         ----------
-        dataset : tf Dataset
-            A Tensorflow Dataset that returns (a batch) of [W,H,C] images
-        **kwargs : Other keyword arguments
-            Other keyword arguments, not used yet.
+        x : Input samples. It could be:
+            A Numpy array (or array-like), 
+                or a list of arrays (in case the model has multiple inputs).
+            A TensorFlow tensor or a list of tensors 
+                (in case the model has multiple inputs).
+            A tf.data dataset.
+            A generator or keras.utils.Sequence instance. 
+            A more detailed description of unpacking behavior for iterator 
+            types (Dataset, generator, Sequence) is given in the Unpacking 
+            behavior for iterator-like inputs section of Model.fit.
 
         Returns
         -------
-        None.
+        Predictions.
 
         """
-        pass
+        
+        return self._model.predict(x, **kwargs)
+        
+
+    

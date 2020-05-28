@@ -53,7 +53,8 @@ def tf_tile(img, shape, sz=128, N=16, pad_val=255):
                   [pad1 // 2, pad1 - pad1 // 2],
                   [0, 0]],
                  constant_values=pad_val)
-    
+
+
     # Resize to [W // sz, sz, H // sz, sz, 3], here W//sz, H//sz is the total
     # number of tiles, and is effectively a grid
     img = tf.reshape(img, (w // sz, sz, h // sz, sz, 3))
@@ -78,7 +79,7 @@ def tf_tile(img, shape, sz=128, N=16, pad_val=255):
      
     # Sort the images in ascending order
     img = tf.gather(img, idxs)
-
+    img.set_shape((N,sz,sz,3))
     return img
 
 

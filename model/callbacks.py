@@ -15,6 +15,7 @@ import itertools
 import io
 
 # A custom callback that logs memory usage each epoch
+# TODO: case for regression (i.e. predictions are already one dimensional)
 class MemoryCallback(Callback):
     """ Memory callback for debugging and checking memory leaks
     During training with Keras
