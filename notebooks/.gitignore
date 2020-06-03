@@ -2,3 +2,6 @@
 
 *.h5
 /logs*
+
+# Exclude python outputs
+.ipynb_checkpoints

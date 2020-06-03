@@ -14,6 +14,10 @@ import matplotlib.pyplot as plt
 import itertools
 import io
 
+import sys
+sys.path.insert(0, '..')
+from model.qwk_optimizer import KappaOptimizer
+
 # A custom callback that logs memory usage each epoch
 # TODO: case for regression (i.e. predictions are already one dimensional)
 class MemoryCallback(Callback):
@@ -30,7 +34,11 @@ class CMCallback(Callback):
     The confusion matrix callback should be used in combination with
     Tensorboard
     """
-    def __init__(self, ds, file_writer=None, normalize=None):
+    def __init__(self, ds, 
+                 file_writer=None, 
+                 normalize=None, 
+                 regression=False, 
+                 qwk_threshold=[0.5, 1.5, 2.5, 3.5, 4.5]):
         """ Class initializer
 
         Parameters
@@ -51,6 +59,8 @@ class CMCallback(Callback):
         self.normalize = normalize
         self.file_writer = file_writer
         self.ds = ds
+        self.regression = regression
+        self.qwk_threshold = qwk_threshold
         
     def on_epoch_end(self, epoch, logs={}):
         """ Declare confusion matrix on epoch end
@@ -98,8 +108,16 @@ class CMCallback(Callback):
             labels.append(label)
         
         
-        preds = np.argmax(np.concatenate( preds, axis=0 ), axis=1)
-        labels = np.argmax(np.concatenate(labels, axis=0), axis=1)
+        if self.regression:
+            # Flatten to [num_samples] np arrays (1 D)
+            preds = np.concatenate( preds, axis=0 )
+            labels = np.concatenate( labels, axis=0 )
+            # The predictions are not thresholded, do this
+            preds = KappaOptimizer().predict(preds)
+        
+        else:
+            preds = np.argmax(np.concatenate( preds, axis=0 ), axis=1)
+            labels = np.argmax(np.concatenate(labels, axis=0), axis=1)
         
         # Calculate the confusion matrix.
         cm = confusion_matrix(labels, preds)

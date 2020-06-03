@@ -10,7 +10,8 @@ import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
-
+# TODO: This code now has a lot of bugs, rewrite to TiffGenerator
+# using TiffGenerator is now advised
 # TODO: refactor to Tiff generator format
 class PNGTileGenerator(object):
     """ Class that handles the loading and processing of concat tile pooling.

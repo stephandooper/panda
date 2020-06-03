@@ -152,3 +152,67 @@ def tile(img,sz, N, pad_val):
     for i in range(len(img)):
         result.append({'img': img[i], 'idx': i})
     return result
+    
+    
+def get_tile_coords(img, sz, N, pad_val):
+
+    shape = img.shape
+    # Padding is only needed if the image cannot be tiled exactly into N tiles
+    # in this case, the image is padded with the size it would be missing
+    pad0, pad1 = (sz - shape[0] % sz) % sz, (sz - shape[1] % sz) % sz
+
+    # Pad the image into size [W + pad0, H + pad1, C]
+    # from now on: W = W + pad0, H = H + pad1
+    img = np.pad(img,
+                 [[pad0 // 2, pad0 - pad0 // 2],
+                  [pad1 // 2, pad1 - pad1 // 2],
+                  [0, 0]],
+                 constant_values=pad_val)
+
+    # image coordinates
+    x_coords = np.arange(0,img.shape[1], sz)
+    y_coords = np.arange(0, img.shape[0], sz)
+
+    x_grid, y_grid = np.meshgrid(x_coords, y_coords)
+
+    # coordinates in tuples
+    coords = np.array(list(zip(y_grid.flatten(), x_grid.flatten())))
+    
+    # Resize to [W // sz, sz, H // sz, sz, 3], here W//sz, H//sz is the total
+    # number of tiles, and is effectively a grid
+    img = img.reshape(img.shape[0] // sz, sz, img.shape[1] // sz, sz, 3)
+
+    # Transpose to [W // sz, H // sz, sz, sz, 3]
+    # reshape to [(W // sz) * (H // sz), sz, sz, 3],
+    # tot_tiles = (W // sz) * (H // sz)
+    img = img.transpose(0, 2, 1, 3, 4).reshape(-1, sz, sz, 3)
+    
+    i = False
+    # If the total number of tiles is smaller than the desired number of tiles
+    if len(img) < N:
+        # Add background tiles
+        img = np.pad(img, [[0, N - len(img)],
+                           [0, 0],
+                           [0, 0],
+                           [0, 0]], constant_values=pad_val)
+        i = True
+
+    # Sort indices in descending order, get tiles which are mostly dark colours.
+    
+    sums = img.reshape(img.shape[0], -1).sum(-1)
+    sums = np.vstack((sums, list(range(0,len(sums))))).T
+    
+    # some weird stuff happens with argsort 
+    # example: when len(img) < N, the indices only get sorted on value
+    # but not on index, so coords may not exist
+    idxs = np.lexsort((sums[:, 1], sums[:, 0]))[:N]
+    #print("idx is", idx)
+
+    #idxs = np.argsort(img.reshape(img.shape[0], -1).sum(-1))[:N]
+    #print("idxs is", idxs)
+    if i:    
+        sub_indices = idxs[0:len(coords)]
+        coords = coords[sub_indices,:]
+    else:
+        coords = coords[idxs, :]
+    return coords    

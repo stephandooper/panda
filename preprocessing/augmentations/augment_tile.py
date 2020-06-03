@@ -10,9 +10,8 @@ from preprocessing.utils.mat_transforms import mat2tile, tf_tile2mat
 
 
 def augment_tile(image, label, aug_func):
-    print(aug_func)
     
-    shape = image.shape
+    original_shape = image.shape
     image, num_splits = tf_tile2mat(image)
     # augmentation operations
     image = tf.image.convert_image_dtype(image, tf.uint8)
@@ -23,5 +22,5 @@ def augment_tile(image, label, aug_func):
                               [image, num_splits, shape], 
                               tf.float32, 
                               name='mat2tile')
-    
+    image.set_shape(original_shape)
     return image, label

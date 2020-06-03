@@ -153,8 +153,8 @@ class Network(object):
         qwk = CohenKappa(num_classes=num_classes,
                          name='cohen_kappa',
                          weightage='quadratic',
-                         sparse_labels=False,
-                         regression=False)
+                         sparse_labels=sparse_labels,
+                         regression=regression)
         
         if not isinstance(custom_metrics, list):
             custom_metrics = [custom_metrics]
@@ -189,19 +189,21 @@ class Network(object):
         writer = tf.summary.create_file_writer(tb_logdir + '/' + now)
 
         # Confusion matrix callback
-        cm_cb = CMCallback(val_dataset, file_writer=writer)
+        cm_cb = CMCallback(val_dataset, 
+                           file_writer=writer, 
+                           regression=regression)
 
         tensorboard = TensorBoard(log_dir=tb_logdir + '/' + now,
                                   histogram_freq=0,
                                   # write_batch_performance=True,
-                                  write_graph=True,
+                                  write_graph=False,
                                   write_images=False,
                                   profile_batch=0)
         
         if not isinstance(custom_callbacks, list):
             custom_callbacks = [custom_callbacks]
         
-        callbacks = [ckp_best_loss, ckp_best_metric, tensorboard, cm_cb] + \
+        callbacks = [ckp_best_loss, ckp_best_metric, tensorboard] + \
             custom_callbacks
             
         # ---------------------------
@@ -258,6 +260,16 @@ class Network(object):
         """
         
         return self._model.predict(x, **kwargs)
+    
+    def get_weights(self):
+        return self._model.get_weights()
+    
+    
+    def set_weights(self, weights):
+        return self._model.set_weights(weights)
+    
+    def summary(self):
+        self._model.summary()
         
 
     

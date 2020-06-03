@@ -26,11 +26,11 @@ class TiffGenerator(object):
                  df, 
                  img_dir, 
                  tiff_level=2, 
-                 batch_size=8, 
-                 preproc_method='tile', 
+                 batch_size=8,
                  aug_func=None, 
                  tile_params=None,
-                 td_params=None):
+                 one_hot=True,
+                 tf_aug_list=[]):
         """ Class initializer
 
         Parameters
@@ -76,13 +76,11 @@ class TiffGenerator(object):
         self.img_dir = img_dir
         self.tiff_level=tiff_level
         self.batch_size = batch_size
-        self.preproc_method = preproc_method
         self.aug_func = aug_func
         
         self.tile_params = {} if tile_params is None else tile_params
-        self.td_params = {} if td_params is None else td_params
-        
-
+        self.one_hot=one_hot
+        self.tf_aug_list = tf_aug_list
         
         # convert image dirs and classes to tensor formats
         self.img_dir = tf.convert_to_tensor(str(img_dir))
@@ -148,12 +146,15 @@ class TiffGenerator(object):
             A [num_classes] int32 tensor, containing a
             one hot representation of the labels
         """            
-        label = tf.strings.to_number(label, out_type=tf.int64)
-        return tf.one_hot(tf.cast(label, dtype=tf.int32),
-                          self.num_classes, dtype=tf.int32)
+        label = tf.strings.to_number(label, out_type=tf.int32)
+        if self.one_hot:
+            label = tf.one_hot(label, self.num_classes, dtype=tf.int32)
+            
+        return label
     
     
-    def _parse_img_label(self, preproc_method):
+    
+    def _parse_img_label(self, path_label):
         ''' Obtain image and labels from a path
         
         Parameters
@@ -176,33 +177,20 @@ class TiffGenerator(object):
 
         '''
         
-        # set the preprocessing functions
-        if preproc_method =='tile':
-            preproc_func = tf_tile
-            preproc_kwargs = self.tile_params
-            
-        elif preproc_method == 'tissue_detect':
-            raise NotImplementedError("not implemented yet, only tiling available")
-        else:
-            raise ValueError("Unknown preprocessing method, must be either 'tile' or 'tissue_detect'")   
-        
-        def wrapper(path_label):
-            path, label = path_label[0], path_label[1]
+        # set the preprocessing functions        
+        path, label = path_label[0], path_label[1]
 
-            label = self._load_label(label)
-            
-            img, shape = self._read_img(path)
-            
-            # preprocess the image according to tiling or tissue detect
-            img = preproc_func(img, shape, **preproc_kwargs)
+        label = self._load_label(label)
 
-            # cast to tf float 32
-            img = tf.image.convert_image_dtype(img, tf.float32)
-            return img, label
+        img, shape = self._read_img(path)
+
+        # preprocess the image according to tiling or tissue detect
+        img = tf_tile(img, shape, **self.tile_params)
+
+        # cast to tf float 32
+        img = tf.image.convert_image_dtype(img, tf.float32)
+        return img, label
         
-        return wrapper    
-        
-    
     def load_process(self,
                      mode='training',
                      shuffle_buffer_size=1000):
@@ -236,15 +224,20 @@ class TiffGenerator(object):
         else:
             ds = self.image_ids
         
-        ds = ds.map(self._parse_img_label(self.preproc_method), num_parallel_calls=AUTOTUNE)
+        ds = ds.map(self._parse_img_label, num_parallel_calls=AUTOTUNE)
         #ds = ds.map(tile_aug(), num_parallel_calls=AUTOTUNE)
         # map before batch here: we do not want to load giant images in batch before preprocessing into tiles
         
         if self.aug_func is not None:
-            ds = ds.map(self._aug(self.preproc_method, self.aug_func), num_parallel_calls=AUTOTUNE)
+            print("USING AN AUGMENTATION ROUTINE")
+            ds = ds.map(self._aug(self.aug_func), num_parallel_calls=AUTOTUNE)
+        
+        
+        for f in self.tf_aug_list:
+            ds = ds.map(lambda x,y: (f(x),y), num_parallel_calls=AUTOTUNE)
             
-        # Gather images into a batch
-        ds = ds.batch(self.batch_size)
+        # Gather images into a batch, drop remainder for cohen kappa batches (cannot be 1)
+        ds = ds.batch(self.batch_size, drop_remainder=True)
         
         # `prefetch` lets the dataset fetch batches in the background
         # while the model is training.
@@ -252,7 +245,7 @@ class TiffGenerator(object):
         
         return ds
     
-    def _aug(self, preproc_method, aug_func):
+    def _aug(self, aug_func):
         """ Augmentation function
 
         Parameters
@@ -274,10 +267,8 @@ class TiffGenerator(object):
             a function with the pre-loaded aug_func routine
 
         """
-        if preproc_method == 'tile':
-            aug_process = functools.partial(augment_tile, aug_func=aug_func)
-        elif preproc_method =='tissue_detect':
-            raise NotImplementedError("This is not implemented yet!") 
+        aug_process = functools.partial(augment_tile, aug_func=aug_func)
+
         
         return aug_process
     
@@ -293,7 +284,7 @@ class TiffGenerator(object):
         return next(self._ds_iter)
    
     # TODO: refactor for tissue detect
-    def display_batch(self, batch=None, plot_grid = (4,4)):
+    def display_batch(self, batch=None, plot_grid = (4,4), rows=None, cols=None):
         """ Plot a batch of images.
         
         Parameters
@@ -315,11 +306,17 @@ class TiffGenerator(object):
         img_batch, label_batch = batch
         img_batch = img_batch.numpy()
         label_batch = label_batch.numpy()
-        label_batch = np.argmax(label_batch, axis=1)
+        
+        if self.one_hot:
+            label_batch = np.argmax(label_batch, axis=1)
         
         bs, nt, w, h, c = img_batch.shape
-        rows = int(np.sqrt(nt))
-        cols = int(nt / rows)
+        
+        if rows is None:
+            rows = int(np.sqrt(nt))
+        if cols  is None:
+            cols = int(nt / rows)
+            
         print("shape of batch, done batch creating", img_batch.shape)
         img_batch = np.reshape(img_batch, (bs,
                                            rows,
@@ -342,7 +339,7 @@ class TiffGenerator(object):
         print("done plotting")
                 
             
-    def display_augmentation(self):
+    def display_augmentation(self, plot_grid=(4,4), rows=None, cols=None):
         '''Display augmentations of a single image of tiles
 
         Returns
@@ -361,7 +358,7 @@ class TiffGenerator(object):
         ds = next(iter(ds.unbatch().take(1).repeat(16).batch(16)))
         
         # display
-        self.display_batch(ds, plot_grid=(4,4))
+        self.display_batch(ds, plot_grid, rows, cols)
         
         # reset the batch size to the original value
         self.batch_size = temp
@@ -386,3 +383,112 @@ class TiffGenerator(object):
         
         # return a dataset
         return self.load_process(mode)
+    
+    
+class TiffFromCoords(TiffGenerator):
+    def __init__(self, 
+                 coords,
+                 df, 
+                 img_dir,  
+                 batch_size=8, 
+                 aug_func=None, 
+                 one_hot=True,
+                 tf_aug_list=[]):
+        
+        # Dictionary with keys: NUM_TILES, IMG_SIZE, PAD_VAL, DATA, TIFF_LEVEL
+        coords = coords.flatten()[0]
+               
+        self.df = df
+        self.img_dir = img_dir
+        self.tiff_level=coords['TIFF_LEVEL']
+        self.img_size = coords['IMG_SIZE']
+        self.pad_val = coords['PAD_VAL']
+        self.num_tiles = coords['NUM_TILES']
+        
+        # get array with image ids
+        self.coord_ids = coords['DATA'][:,0]
+        
+        # get the arrays of corresponding coordinates
+        self.coords = coords['DATA'][:,1]
+        
+        self.batch_size = batch_size
+        self.aug_func = aug_func
+        self.one_hot=one_hot
+        self.tf_aug_list=tf_aug_list
+
+        # convert image dirs and classes to tensor formats
+        self.img_dir = tf.convert_to_tensor(str(img_dir))
+        self.num_classes = df['isup_grade'].nunique()
+        
+        # Generate a dataset that yields (image_id, isup_grade) tuples
+        self.isup_str = [str(x) for x in df['isup_grade'].tolist()]
+        
+        # Zip the image_id and isup dataset to yield tuple pairs (img_id, isup)
+        image_ids = [self.img_dir +'/' + x + '.tiff' for x in self.df['image_id'].tolist()]
+        new_ds = [*zip(image_ids, self.isup_str)]
+        
+        # Create the dataset from the slices
+        self.image_ids = tf.data.Dataset.from_tensor_slices(new_ds)
+        
+        # create a iter dataset for get_batch and display_batch methods
+        self._ds_iter = iter(self.load_process(shuffle_buffer_size=1))       
+    
+    def _read_img(self, path):
+        
+        def read_skim_regions(path):
+            
+            result = []
+            # decode byte string
+            path = path.decode('utf8')
+            img = skimage.io.MultiImage(path)[self.tiff_level]
+            shape = img.shape
+            
+            pad0, pad1 = ((self.img_size - shape[0] % self.img_size) % self.img_size, 
+                         (self.img_size - shape[1] % self.img_size) % self.img_size)
+
+            img = np.pad(img,
+                 [[pad0 // 2, pad0 - pad0 // 2],
+                  [pad1 // 2, pad1 - pad1 // 2],
+                  [0, 0]],
+                 constant_values=self.pad_val)
+            
+            ids = path.split('/')[-1].split('.')[0]
+            
+            idx = np.where(self.coord_ids == ids)
+            coords = self.coords[idx][0]
+            
+            for x,y in coords:
+                result.append(img[x:x + self.img_size, y:y+self.img_size, :])
+            
+            result = np.array(result, dtype=np.uint8)
+            
+            if len(result) < self.num_tiles:
+                
+                result = np.pad(result, [[0, self.num_tiles - len(result)],
+                   [0, 0],
+                   [0, 0],
+                   [0, 0]], constant_values=self.pad_val)
+  
+                
+            return result
+
+        img = tf.numpy_function(read_skim_regions, 
+                                [path], tf.uint8, 
+                                name='tiff_read')
+        img.set_shape([self.num_tiles, self.img_size, self.img_size, 3])
+
+        return img
+    
+    def _parse_img_label(self, path_label):
+        path, label = path_label[0], path_label[1]
+
+        label = self._load_label(label)
+
+        #img, shape = self._read_img(path)
+
+        # preprocess the image according to tiling or tissue detect
+        img = self._read_img(path)
+
+        # cast to tf float 32
+        img = tf.image.convert_image_dtype(img, tf.float32)
+        return img, label

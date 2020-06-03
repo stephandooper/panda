@@ -1,2 +1,8 @@
+# All weights
+*.h5
 
+# directories:
+EfficientNetB1
 
+# Python outputs
+.ipynb_checkpoints
