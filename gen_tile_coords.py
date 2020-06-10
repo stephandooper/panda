@@ -17,11 +17,11 @@ if __name__ == '__main__':
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description='Train Mask R-CNN to detect balloons.')
+        description='Generate tile coordinates')
 
     parser.add_argument('--dataset', required=True,
-                        metavar="/path/to/balloon/dataset/",
-                        help='Directory of the Balloon dataset')
+                        metavar="/path/to/images/dataset/",
+                        help='Directory of the Panda train images')
     parser.add_argument('--tiff_level', required=True,
                         metavar="tiff level (0,1,2)",
                         help="the tiff level, either (0,1,2)",

@@ -30,7 +30,9 @@ class TiffGenerator(object):
                  aug_func=None, 
                  tile_params=None,
                  one_hot=True,
-                 tf_aug_list=[]):
+                 tf_aug_list=[],
+                 img_transform_func=None):
+        
         """ Class initializer
 
         Parameters
@@ -46,12 +48,11 @@ class TiffGenerator(object):
         batch_size : int, optional
             The batch size for training. The dataset will return arrays of
             [batch_size, img, label] . The default is 8.
-        preproc_method : string, optional
-            The preprocessing method, either 'tile' or 'tissue_detect'. 
-            The default is 'tile'.
         aug_func : func, optional
             An augmentation routine function, containing Albumentation 
-            augmentations. The default is None.
+            augmentations. The default is None. These augmentations are done
+            on an image wide level (i.e on all NUM_TILES simultaneously). This
+            is useful for costly computations such as stain augmentation
         tile_params : dict, optional
             A dictionary with optional parameters for tiling. The options are:
                 sz: int 
@@ -62,10 +63,23 @@ class TiffGenerator(object):
                     The value for the paddings. The default is 255
                     This should be 255 for white backgrounds (tissue samples)
                     and 0 for black backgrounds (masks)
-        td_params : dict, optional
-            Optional kwargs for tissue detect algorithm. Currently not 
-            implemented!
-
+        one_hot : bool, optional
+            The choice whether to use one hot encoding for the labels (True)
+            or sparse encodings (False). The default is True
+        tf_aug_list : list, optional
+            A list of tensorlfow augmentation functions. The functions must
+            have as input a tensorflow Tensor, and also output a Tensorflow
+            Tensor. The augmentations will be done per tile element i.e not on
+            an entire image like aug_func. An example of this is
+            [t_rot_func, tf_flip_func] which is a list of 2 augmentations which
+            will be applied sequentially. The default is []
+        img_transform_func : func, None
+            An optional image transformation function. This can be useful
+            for when the list of tiles needs to be changed into e.g. one big
+            image. This can be done by making a function that trasnforms
+            the [NT, H, W, C] tensorflow array into a [Hnew, Wnew, C] array
+            and passing it to img_transform func. The default is None, so no
+            function is passed.
         Yields
         ------
         None.
@@ -77,11 +91,10 @@ class TiffGenerator(object):
         self.tiff_level=tiff_level
         self.batch_size = batch_size
         self.aug_func = aug_func
-        
         self.tile_params = {} if tile_params is None else tile_params
         self.one_hot=one_hot
         self.tf_aug_list = tf_aug_list
-        
+        self.img_transform_func = img_transform_func
         # convert image dirs and classes to tensor formats
         self.img_dir = tf.convert_to_tensor(str(img_dir))
         self.num_classes = df['isup_grade'].nunique()
@@ -193,7 +206,7 @@ class TiffGenerator(object):
         
     def load_process(self,
                      mode='training',
-                     shuffle_buffer_size=1000):
+                     shuffle_buffer_size=10000):
         """ The dataset loading process
         
         Parameters
@@ -235,6 +248,10 @@ class TiffGenerator(object):
         
         for f in self.tf_aug_list:
             ds = ds.map(lambda x,y: (f(x),y), num_parallel_calls=AUTOTUNE)
+            
+            
+        if self.img_transform_func is not None:
+            ds = ds.map(lambda x,y: (self.img_transform_func(x),y), num_parallel_calls=AUTOTUNE)
             
         # Gather images into a batch, drop remainder for cohen kappa batches (cannot be 1)
         ds = ds.batch(self.batch_size, drop_remainder=True)
@@ -386,6 +403,21 @@ class TiffGenerator(object):
     
     
 class TiffFromCoords(TiffGenerator):
+    """ Generates samples from tiff files according to a coordinate file
+    the coordinates can be generated for a specific number of tiles, image size
+    and pad_val
+    
+    The coordinates are supposed to be in a npy file containing a dictionary
+    containng the following keyword:
+        NUM_TILES: an int given the number of tiles
+        TIFF_LEVEL: the tiff level (int)
+        PAD_VAL: the padding values used during padding
+        IMG_SIZE: and int with the image size (square)
+        DATA: a np array containing the image_id, and [NUM_TILES, 2] coordinates
+            per image id. The coordinates are supposed to be unnormalized
+            and uncentered (i.e regular pixel coordinates)
+    """
+    
     def __init__(self, 
                  coords,
                  df, 
@@ -393,7 +425,34 @@ class TiffFromCoords(TiffGenerator):
                  batch_size=8, 
                  aug_func=None, 
                  one_hot=True,
-                 tf_aug_list=[]):
+                 tf_aug_list=[],
+                 img_transform_func=None):
+        """Class initializer
+
+        Parameters
+        ----------
+        coords : dict
+            A dictionary containing the information posted above.
+        df : Pandas DataFrame
+            A dataframe containing the image ids and isup grades
+        img_dir : string or pathlib object
+            The path to the image directory
+        batch_size : int, optional
+            The batch size for training. The default is 8.
+        aug_func : function, optional
+            DESCRIPTION. An augmentation routine function.
+        one_hot : bool, optional
+            Whether or not to use sparse or one hot labels. The default is True.
+        tf_aug_list : list of functions, optional
+            A list of tf augmentation functions. For example, 
+            [tf_rotate, tf_flip] where tf_rotate takes a (batch of) images
+            and returns the augmentated images. The default is [].
+
+        Yields
+        ------
+        None.
+
+        """
         
         # Dictionary with keys: NUM_TILES, IMG_SIZE, PAD_VAL, DATA, TIFF_LEVEL
         coords = coords.flatten()[0]
@@ -415,6 +474,7 @@ class TiffFromCoords(TiffGenerator):
         self.aug_func = aug_func
         self.one_hot=one_hot
         self.tf_aug_list=tf_aug_list
+        self.img_transform_func = img_transform_func
 
         # convert image dirs and classes to tensor formats
         self.img_dir = tf.convert_to_tensor(str(img_dir))
@@ -434,8 +494,33 @@ class TiffFromCoords(TiffGenerator):
         self._ds_iter = iter(self.load_process(shuffle_buffer_size=1))       
     
     def _read_img(self, path):
+        """ Read the image from a tensor byte string path
+
+        Parameters
+        ----------
+        path : A tf Tensor
+            Tf tensor containing a byte string with the path to the image
+
+        Returns
+        -------
+        tf tensor
+            A [NUM_TILES, H,W,C] tensor containing the image patch
+        """
         
         def read_skim_regions(path):
+            """ Read image regions
+
+            Parameters
+            ----------
+            path : A tf Tensor
+                Tf tensor containing a byte string with the path to the image
+
+            Returns
+            -------
+            NP array
+                A [NUM_TILES, H, W, C] numpy array containing the image patch
+
+            """
             
             result = []
             # decode byte string
@@ -480,6 +565,23 @@ class TiffFromCoords(TiffGenerator):
         return img
     
     def _parse_img_label(self, path_label):
+        """ Parse image and labels from (path, label) tuples
+
+        Parameters
+        ----------
+        path_label : Tuple of (Tf byte string, tf string)
+            A tuple of strings containing the path to the image and label
+            
+        Returns
+        -------
+        img : Tensorflow Array
+            A [NUM_TILES, H, W, C] array containing the list of tiled images
+        label : TF array
+            A Tensorflow arra containing the label. It is either a single
+            integer (sparse), or 1D array of size NUM_CLASSES in case
+            of one hot encodings.
+
+        """
         path, label = path_label[0], path_label[1]
 
         label = self._load_label(label)

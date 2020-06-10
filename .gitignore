@@ -3,6 +3,9 @@
 
 # directories:
 EfficientNetB1
+EfficientNetB1_bigimg
+efficientnet_weights
+efficientnet_gn
 
 # Python outputs
 .ipynb_checkpoints

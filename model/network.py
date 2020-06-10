@@ -95,6 +95,7 @@ class Network(object):
               num_classes=6,
               sparse_labels=False,
               regression=False,
+              class_weights=None,
               custom_metrics=[],
               custom_callbacks=[],
               custom_optimizer=None,
@@ -232,10 +233,15 @@ class Network(object):
         # TODO: check performance without repeat on dataset
         # TODO: this way, steps per epoch args no longer needed
         
+        
+        if class_weights is not None:
+            print("using class weights")
+        
         self._model.fit(x=dataset,
                         epochs=epochs,
                         validation_data=val_dataset,
-                        callbacks=callbacks)
+                        callbacks=callbacks,
+                        class_weight=class_weights)
         
     def predict(self, x, **kwargs):
         """ Predict wrapper, is the same as Tf keras
