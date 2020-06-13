@@ -252,7 +252,10 @@ class TiffGenerator(object):
             
         if self.img_transform_func is not None:
             ds = ds.map(lambda x,y: (self.img_transform_func(x),y), num_parallel_calls=AUTOTUNE)
-            
+        
+        # black background for zero pooling
+        ds = ds.map(lambda x,y: ((1 - x), y), num_parallel_calls=AUTOTUNE)
+        
         # Gather images into a batch, drop remainder for cohen kappa batches (cannot be 1)
         ds = ds.batch(self.batch_size, drop_remainder=True)
         
@@ -318,7 +321,7 @@ class TiffGenerator(object):
         """
         if batch is None:
             batch = self.get_batch()
-        # The batch is [BS, NT, W, H, C], this is not a supported format
+        # The batch is [BS, NT, H, W, C], this is not a supported format
         # Loop over the batch (rows) and num_tiles (columns) and display
         img_batch, label_batch = batch
         img_batch = img_batch.numpy()
@@ -327,22 +330,27 @@ class TiffGenerator(object):
         if self.one_hot:
             label_batch = np.argmax(label_batch, axis=1)
         
-        bs, nt, w, h, c = img_batch.shape
-        
-        if rows is None:
-            rows = int(np.sqrt(nt))
-        if cols  is None:
-            cols = int(nt / rows)
+        if len(img_batch.shape) == 5:
+            bs, nt, h, w, c = img_batch.shape
             
-        print("shape of batch, done batch creating", img_batch.shape)
-        img_batch = np.reshape(img_batch, (bs,
-                                           rows,
-                                           cols,
-                                           w, h, c))
+            if rows is None:
+                rows = int(np.sqrt(nt))
+            if cols  is None:
+                cols = int(nt / rows)
+                
+            print("shape of batch, done batch creating", img_batch.shape)
+            img_batch = np.reshape(img_batch, (bs,
+                                               rows,
+                                               cols,
+                                               h, w, c))
+            
+            img_batch = np.transpose(img_batch, (0, 1, 3, 2, 4, 5))
+            img_batch = np.reshape(img_batch, (bs, h * rows, w * cols, c))
+            img_batch = np.uint8(img_batch * 255)
+        else:
+            bs, h, w, c = img_batch.shape
         
-        img_batch = np.transpose(img_batch, (0, 1, 3, 2, 4, 5))
-        img_batch = np.reshape(img_batch, (bs, w * rows, h * cols, c))
-        img_batch = np.uint8(img_batch * 255)
+        
         fig, ax = plt.subplots(plot_grid[0], plot_grid[1], figsize=(16, 18))
         print("done reshaping image", img_batch.shape)
         # Plot each image in the dataframe

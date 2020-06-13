@@ -43,7 +43,7 @@ from albumentations import (
     RandomBrightness, RandomContrast
 )
 
-from model.models import ResNext50, EfficientNetB1, EfficientNetB1_bigimg
+from model.models import ResNext50, EfficientNetB1, EfficientNetB1_bigimg, ResNext50_bigimg
 import os
 
 #this isnt urgent
@@ -134,9 +134,9 @@ class CoordsConfig(object):
     NFOLDS = 4    # number of folds to use for (cross validation)
     SEED=5        # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     TRAIN_FOLD=0  # select the first fold for training/validation
-    BATCH_SIZE = 3
+    BATCH_SIZE = 4
     NUM_EPOCHS = 40 
-    LEARNING_RATE = 3e-4
+    LEARNING_RATE = 8e-5
     
     MODEL = EfficientNetB1_bigimg
     MODEL_NAME = MODEL.__name__
@@ -179,7 +179,9 @@ def create_split(config):
                                    Path('train.csv'),
                                skip_csv=Path(config.DATA_DIR) / 
                                    Path('PANDA_Suspicious_Slides_15_05_2020.csv'), 
-                               skip_list=[])
+                               skip_list=['marks', 'Background only', 
+                                          'No cancerous tissue but ISUP Grade > 0', 
+                                          'tiss', 'blank'])
     
     # we create a possible stratification here, the options are by isup grade,
     # or further distilled by isup grade and data provider
@@ -226,8 +228,8 @@ if __name__ =='__main__':
 
     lrreducer = ReduceLROnPlateau(
         monitor='val_loss',
-        factor=.5,
-        patience=5,
+        factor=.90,
+        patience=1,
         verbose=1,
         min_lr=1e-7
     )
@@ -286,10 +288,7 @@ if __name__ =='__main__':
         print('classes weigths:', class_weights)
         
         weights_fname = f'{config.MODEL_NAME}_{data.tiff_level}_{now}_{train_fold}.h5'
-        
-        # loading network weights
-        network.load_weights('EfficientNetB1_bigimg_1_20200608-221404_0_bestQWK.h5')
-        
+        network.load_weights('EfficientNetB1_bigimg_1_20200612-214441_0_epoch.h5')
         # Train the network
         network.train(dataset=data(),
                   val_dataset=val_data(mode='validation'),

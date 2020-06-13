@@ -180,6 +180,15 @@ class Network(object):
                                           save_best_only=True,
                                           mode='max',
                                           save_weights_only=True)
+        
+        # save epoch
+        ckp_epoch = ModelCheckpoint(filepath=root + "_epoch" + ext,
+                                  monitor='val_cohen_kappa',
+                                  verbose=1,
+                                  save_best_only=False,
+                                  mode='max',
+                                  save_weights_only=False,
+                                  save_freq='epoch')
     
         # TODO: add early stopping?
         
@@ -204,7 +213,7 @@ class Network(object):
         if not isinstance(custom_callbacks, list):
             custom_callbacks = [custom_callbacks]
         
-        callbacks = [ckp_best_loss, ckp_best_metric, tensorboard] + \
+        callbacks = [ckp_best_loss, ckp_best_metric, ckp_epoch, tensorboard] + \
             custom_callbacks
             
         # ---------------------------

@@ -65,8 +65,25 @@ class ResNext50(BaseModel):
         self.model.add(KL.Dropout(.2, seed=seed))
         self.model.add(KL.Dense(1, activation=qwk_act, dtype='float32'))
         
+def ResNext50_bigimg(row=1440, col=1440):
+
+    seed = 1
+    ResNext50, _ = Classifiers.get('resnext50')
+    bottleneck = ResNext50(input_shape=(row, col, 3),
+                           weights='imagenet', 
+                           include_top=False)
     
+    bottleneck = Model(inputs=bottleneck.inputs, 
+                       outputs=bottleneck.layers[-2].output)
     
+    model = Sequential()
+    model.add(bottleneck)
+    model.add(KL.Flatten())
+    model.add(KL.Dense(1, activation=qwk_act, dtype='float32')) 
+    
+    return model
+
+
 def EfficientNetB1(NUM_TILES, SZ):
     seed = 1
     bottleneck = efn.EfficientNetB1( 
@@ -91,7 +108,7 @@ def EfficientNetB1(NUM_TILES, SZ):
     return model
     
 def EfficientNetB1_bigimg(row=1440, col=1440):
-    bottleneck = efn.EfficientNetB1( 
+    bottleneck = efn.EfficientNetB0( 
         include_top=False, 
         pooling='avg',
         weights='imagenet',
@@ -104,17 +121,10 @@ def EfficientNetB1_bigimg(row=1440, col=1440):
 
 
     from tensorflow.keras import Sequential
-    bottleneck = Model(inputs=bottleneck.inputs, outputs=bottleneck.layers[-2].output)
+    bottleneck = Model(inputs=bottleneck.inputs, outputs=bottleneck.layers[-1].output)
     model = Sequential()
     model.add(bottleneck)
-    model.add(KL.BatchNormalization())
-    model.add(KL.GlobalMaxPooling2D())
     model.add(KL.Flatten())
-    model.add(KL.BatchNormalization())
-    model.add(KL.Dropout(.25))
-    model.add(KL.Dense(512, activation='elu'))
-    model.add(KL.BatchNormalization())
-    model.add(KL.Dropout(.25))
     model.add(KL.Dense(1, activation=qwk_act, dtype='float32'))
     return model
 
