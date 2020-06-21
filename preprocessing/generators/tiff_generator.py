@@ -289,7 +289,6 @@ class TiffGenerator(object):
         """
         aug_process = functools.partial(augment_tile, aug_func=aug_func)
 
-        
         return aug_process
     
     def get_batch(self):

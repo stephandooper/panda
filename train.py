@@ -10,7 +10,6 @@ import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 from tensorflow_addons.optimizers import RectifiedAdam
 from tensorflow.keras.callbacks import ReduceLROnPlateau
-from tensorflow.distributed import MirroredStrategy
 
 # 16 bit precision computing
 from tensorflow.keras.mixed_precision import experimental as mixed_precision
@@ -33,7 +32,7 @@ from preprocessing.generators import TiffGenerator, TiffFromCoords
 from preprocessing.utils.mat_transforms import tf_tile2mat
 from utils.utils import set_gpu_memory, seed_all
 
-from model.network import Network
+from model.network import NetworkNew
 
 # Augmentation packages
 
@@ -58,9 +57,14 @@ from albumentations import (
 from model.models import (
     ResNext50,
     EfficientNetB1,
-    EfficientNetB1_bigimg,
+    EfficientNetB0_bigimg,
     ResNext50_bigimg,
+    EfficientNetB0_bigimg_batchrenorm,
+    ResNet34_bigimg,
+    ResNet34_bigimg_GeM,
+    ResNet34_bigimg_GeM_v2
 )
+
 import os
 
 # this isnt urgent
@@ -153,11 +157,10 @@ class CoordsConfig(object):
         5  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
-    BATCH_SIZE = 4
-    NUM_EPOCHS = 40
-    LEARNING_RATE = 8e-5
-
-    MODEL = EfficientNetB1_bigimg
+    BATCH_SIZE = 8
+    NUM_EPOCHS = 30
+    LEARNING_RATE = 8.321687346324325e-05
+    MODEL = ResNet34_bigimg_GeM_v2
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
 
@@ -197,14 +200,8 @@ def create_split(config):
 
     fold_df = PandasDataLoader(
         images_csv_path=Path(config.DATA_DIR) / Path("train.csv"),
-        skip_csv=Path(config.DATA_DIR) / Path("PANDA_Suspicious_Slides_15_05_2020.csv"),
-        skip_list=[
-            "marks",
-            "Background only",
-            "No cancerous tissue but ISUP Grade > 0",
-            "tiss",
-            "blank",
-        ],
+        skip_csv=None, # Path(config.DATA_DIR) / Path("PANDA_Suspicious_Slides_15_05_2020.csv"),
+        skip_list=[]
     )
 
     # we create a possible stratification here, the options are by isup grade,
@@ -217,14 +214,17 @@ def create_split(config):
 
 
 if __name__ == "__main__":
-
+    
+    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+    os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    
     config = CoordsConfig()
 
     # seed, fp16 training,
     # Reproducibility, but mind individual tensorflow OPS (layers)
 
     # control for the gpu memory, and number of used gpu's
-    set_gpu_memory(num_gpu=1, device_type="GPU")
+    #set_gpu_memory(num_gpu=1, device_type="GPU")
 
     # see the utils functions which seeds are set
     # tensorflow ops still have to be seeded manually...
@@ -237,32 +237,42 @@ if __name__ == "__main__":
 
     print("Compute dtype: %s" % policy.compute_dtype)
     print("Variable dtype: %s" % policy.variable_dtype)
+    print("using model", config.MODEL_NAME)
 
-    with MirroredStrategy().scope():
-        model = config.MODEL
-        network = Network(model())
+    model = config.MODEL
+    # optimizer = Adam(lr=config.LEARNING_RATE)
+    optimizer = RectifiedAdam(lr=config.LEARNING_RATE)
 
-        network.summary()
-        # get initial weights and use them at the start of each fold
-        # Clearing TF/keras graph still has a lot of issues (freeing VRAM)
-        init_weights = network.get_weights()
+    lrreducer = ReduceLROnPlateau(
+        monitor="val_loss", factor=0.95, patience=1, verbose=1, min_lr=1e-7
+    )
 
-        # optimizer = Adam(lr=config.LEARNING_RATE)
-        optimizer = RectifiedAdam(lr=config.LEARNING_RATE)
+    # custom callbacks
+    custom_callbacks = [lrreducer]
 
-        lrreducer = ReduceLROnPlateau(
-            monitor="val_loss", factor=0.90, patience=1, verbose=1, min_lr=1e-7
-        )
-
-        # custom callbacks
-        custom_callbacks = [lrreducer]
-
-        # qwk is added by default in network class
-        custom_metrics = [tf.keras.metrics.RootMeanSquaredError()]
-        custom_loss = tf.keras.losses.MeanSquaredError()
-
+    # qwk is added by default in network class
+    custom_metrics = [tf.keras.metrics.RootMeanSquaredError()]
+    custom_loss = tf.keras.losses.MeanSquaredError()
+    
+    
+    # create model instance with all needed args for compile
+    # i.e. model, metric, optimizer, loss
+    network = NetworkNew(model(), 
+                      num_classes=config.NUM_CLASSES,
+                      sparse_labels=True,
+                      regression=True,
+                      custom_metrics=custom_metrics,
+                      custom_optimizer=optimizer,
+                      custom_loss=custom_loss)
+    
+    network.summary()
+    # get initial weights and use them at the start of each fold
+    # Clearing TF/keras graph still has a lot of issues (freeing VRAM)
+    init_weights = network.get_weights()
+    
+    
     fold_df = create_split(config)
-
+    
     for train_fold in range(0, config.NFOLDS):
         # only train a single fold
         print("preparing training fold", train_fold)
@@ -270,15 +280,15 @@ if __name__ == "__main__":
             break
         # model
         now = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-
+    
         # set the weights to start with
         network.set_weights(init_weights)
-
+    
         # create the folds
         # we can create training/validation splits from the fold column
         train_df = fold_df[fold_df["split"] != train_fold]
         valid_df = fold_df[fold_df["split"] == train_fold]
-
+    
         # create training data
         print("creating training set")
         data = TiffFromCoords(
@@ -291,11 +301,11 @@ if __name__ == "__main__":
             one_hot=False,
             img_transform_func=config.IMG_TRANSFORM_FUNC,
         )
-
+    
         # do not use augmentation for the val_data, if aug_func is empty
         # (None default), then no augmentation is used.
         # Create validation data
-
+    
         print("Creating validation set")
         val_data = TiffFromCoords(
             coords=config.COORDS,
@@ -306,29 +316,24 @@ if __name__ == "__main__":
             one_hot=False,
             img_transform_func=config.IMG_TRANSFORM_FUNC,
         )
-
+        
+        '''
         lbl_value_counts = train_df["isup_grade"].value_counts()
         class_weights = {
             i: max(lbl_value_counts) / v for i, v in lbl_value_counts.items()
         }
         print("classes weigths:", class_weights)
-
+        '''
+        
+        network.load_weights('ResNet34_bigimg_GeM_v2_1_20200621-030427_0_epoch.h5')
         weights_fname = f"{config.MODEL_NAME}_{data.tiff_level}_{now}_{train_fold}.h5"
-        network.load_weights("EfficientNetB1_bigimg_1_20200612-214441_0_epoch.h5")
         # Train the network
         network.train(
             dataset=data(),
             val_dataset=val_data(mode="validation"),
             epochs=config.NUM_EPOCHS,
-            learning_rate=config.LEARNING_RATE,
-            num_classes=config.NUM_CLASSES,
-            sparse_labels=True,
-            regression=True,
             class_weights=None,
             custom_callbacks=custom_callbacks,
-            custom_metrics=custom_metrics,
-            custom_loss=custom_loss,
-            custom_optimizer=optimizer,
             save_weights_name=weights_fname,
-            tb_logdir=f"./{config.MODEL_NAME}",
+            tb_logdir=f"./logs/{config.MODEL_NAME}",
         )

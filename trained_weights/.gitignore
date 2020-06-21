@@ -3,4 +3,6 @@
 *.zip
 
 efficientnetb0
+efficientnetb1
+resnet34
 

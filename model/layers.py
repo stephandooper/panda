@@ -9,198 +9,34 @@ Created on Sun May 31 01:09:51 2020
 from tensorflow.keras import layers
 import tensorflow as tf
 import tensorflow.keras.backend as K
-   
+## Import Necessary Modules
 
-class GeneralizedMeanPooling2D(layers.Layer):
-    """ Generalized mean pooling layer for 2D images
-        This also works for Timedistributed tiled images (PANDA challenge)
-        
-    
-        References
-        ----------
-        https://www.tensorflow.org/guide/keras/custom_layers_and_models
-        https://arxiv.org/pdf/1711.02512.pdf
-        https://github.com/filipradenovic/cnnimageretrieval
-    
-    
-    """
-    def __init__(self, p=3):
-        """ Class initializer
-        Parameters
-        ----------
-        p : float, optional
-            The exponent (power). The default is 3.
-        eps : float, optional
-            Values lower than eps will be clipped. The default is 1e-6.
+from tensorflow.keras.layers import Activation
+from tensorflow.keras.utils import get_custom_objects
 
-        Returns
-        -------
-        None.
+class Mish(Activation):
+    '''
+    Mish Activation Function.
+    .. math::
+        mish(x) = x * tanh(softplus(x)) = x * tanh(ln(1 + e^{x}))
+    Shape:
+        - Input: Arbitrary. Use the keyword argument `input_shape`
+        (tuple of integers, does not include the samples axis)
+        when using this layer as the first layer in a model.
+        - Output: Same shape as the input.
+    Examples:
+        >>> X = Activation('Mish', name="conv1_act")(X_input)
+    '''
 
-        """
-        eps=1e-6
-        super(GeneralizedMeanPooling2D, self).__init__()
-        self.eps = eps
-        shape_init = tf.ones(1, name="ones")
-        self.p = tf.Variable(initial_value=p * shape_init, trainable=True)
-        
-    def call(self, inputs):
-        return self.gem2d(inputs, p=self.p, eps=self.eps)
-    
-    
-    def gem2d(self, x, p=3, eps=1e-6):
-        """ A generalized mean pooling  function for 2d images
+    def __init__(self, activation, **kwargs):
+        super(Mish, self).__init__(activation, **kwargs)
+        self.__name__ = 'Mish'
 
-        Parameters
-        ----------
-        x : A tensorflow Tensor
-            A 4D [D, BS, H, W, C] tensor containing the images
-        p : float, optional
-            A learnable exponent parameter. The default is 3.
-        eps : float, optional
-            an epsilon to cut low values. The default is 1e-6.
 
-        Returns
-        -------
-        pooled : Tensorflow Tensor.
-            The generalized average pooled images 4D
-            Returns a [BS, C] array
-        """
-        x_max = tf.reduce_max(x)
-        x = tf.clip_by_value(x, eps, x_max, name='clip')
-        
-        # a [Nt, H, W, C] array
-        shapes = x.get_shape()
-        
-        # for fp16 support
-        p = tf.cast(p, x.dtype)
-        pooled = tf.nn.avg_pool2d(tf.math.pow(x, p), 
-                                  ksize=[shapes[-3], shapes[-2]],
-                                  strides=[shapes[-3], shapes[-2]],
-                                  padding='SAME',
-                                  )
-        pooled = tf.math.pow(pooled, 1./p)
-        shape = pooled.shape
-        
-        # squeeze from [BS, 1, 1, C] to [BS, C]
-        pooled = tf.squeeze(pooled)
-        
-        # for some reason, pooled shape is <unknown> after tf squeeze
-        pooled.set_shape((shape[0],shape[3]))
-        return pooled
-    
-    def compute_output_shape(self, input_shape):
-        new_shape = (input_shape[0],input_shape[3])
-        return new_shape
-        
-    def get_config(self):
+def mish(inputs):
+    return inputs * tf.math.tanh(tf.math.softplus(inputs))
 
-        config = super().get_config().copy()
-        config.update({
-            'p': self.p,
-        })
-        return config
-    
-class MPGeneralizedMeanPooling2D(layers.Layer):
-    """ Generalized mean pooling layer for 2D images
-        This also works for Timedistributed tiled images (PANDA challenge)
-        The layer learns a different parameter for each feature map
-        
-        # THIS LAYER IS NOT PROPERLY DEBUGGED/TESTED, USE AT OWN RISK
-        
-    
-        References
-        ----------
-        https://www.tensorflow.org/guide/keras/custom_layers_and_models
-        https://arxiv.org/pdf/1711.02512.pdf
-        https://github.com/filipradenovic/cnnimageretrieval
-    
-    
-    """
-    def __init__(self, dim, p=2):
-        """
-
-        Parameters
-        ----------
-        p : float, optional
-            The exponent (power). The default is 3.
-        dim : int
-            The feature map dimension of the previous layer
-        eps : float, optional
-            Values lower than eps will be clipped. The default is 1e-6.
-
-        Returns
-        -------
-        None.
-
-        """
-        self.dim = dim
-        eps=1e-6
-        super(MPGeneralizedMeanPooling2D, self).__init__()
-        self.eps = eps
-        shape_init = tf.ones(tf.cast(self.dim,tf.int32), name="ones")
-        self.p = tf.Variable(initial_value=p * shape_init, trainable=True)
-        
-    def call(self, inputs):
-        return self.gem2d(inputs, p=self.p[tf.newaxis, tf.newaxis, tf.newaxis, :], eps=self.eps)
-    
-    
-    def gem2d(self, x, p=3, eps=1e-6):
-        """ A generalized mean pooling  function for 2d images
-
-        Parameters
-        ----------
-        x : A tensorflow Tensor
-            A 4D [D, BS, H, W, C] tensor containing the images
-        p : float, optional
-            A learnable exponent parameter. The default is 3.
-        eps : float, optional
-            an epsilon to cut low values. The default is 1e-6.
-
-        Returns
-        -------
-        pooled : Tensorflow Tensor.
-            The generalized average pooled images 4D
-            Returns a [BS, 1, 1, C] array
-        """
-        print("SHAPE", x.shape)
-        x = tf.cast(x,tf.float32)
-        x_max = tf.reduce_max(x)
-        x = tf.clip_by_value(x, eps, x_max, name='clip')
-        
-        # a [Nt, H, W, C] array
-        shapes = x.get_shape()
-        
-        # for fp16 support
-        p = tf.cast(p, x.dtype)
-        pooled = tf.nn.avg_pool2d(tf.math.pow(x, p), 
-                                  ksize=[shapes[-2], shapes[-3]],
-                                  strides=[shapes[-2], shapes[-3]],
-                                  padding='SAME')
-        pooled = tf.math.pow(pooled, 1./p)
-        shape = pooled.shape
-        
-        pooled = tf.squeeze(pooled)
-        
-        # for some reason, pooled shape is <unknown> after tf squeeze
-        pooled.set_shape((shape[0],shape[3]))
-        return pooled
-    
-    
-    def compute_output_shape(self, input_shape):
-        new_shape = (input_shape[0],input_shape[3])
-        return new_shape
-    
-    
-    def get_config(self):
-
-        config = super().get_config().copy()
-        config.update({
-            'dim': self.dim,
-            'p': self.p,
-        })
-        return config
-        
+get_custom_objects().update({'Mish': Mish(mish)})        
         
 class GeM(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
@@ -208,6 +44,7 @@ class GeM(tf.keras.layers.Layer):
         self.p = tf.Variable(3.)
         self.eps = 1e-6
     def call(self, inputs):
+        inputs = tf.cast(inputs, tf.float32)
         x = tf.math.pow(tf.math.maximum(self.eps, inputs), self.p)
         size = (x.shape[1], x.shape[2])
         return tf.math.pow(tf.nn.avg_pool2d(x, size, 1, padding='VALID'), 1./self.p)        
@@ -218,15 +55,71 @@ def qwk_act(x):
 
     Parameters
     ----------
-    x : TYPE
-        DESCRIPTION.
+    x : Tf tensor
+        A tf tensor of size 1.
 
     Returns
     -------
-    x : TYPE
-        DESCRIPTION.
+    x : Tf tensor
+        A Tf tensor of size 1, clipped to the range [0,5]
 
     """
     x = K.switch(x>=0, x, 0)
     x = K.switch(x <=5, x, 5)
     return x
+
+
+class WeightLayer(tf.keras.layers.Layer):
+    """ A weightlayer to be applied after Unet 
+        The output probability map of the Unet is thresholded according to
+        threshold, and then each prediction map (background, benign, malignent)
+        is weighed according to [lambda1, lambda2, lambda3]
+        
+        The default is that background is removed (0), benign is weighed by
+        1, and malignent is weighed by 3.
+    """
+    
+    def __init__(self, lambdas = [0.,1.,3.], threshold=0.8):
+        """ class initializer
+
+        Parameters
+        ----------
+        lambdas : list, optional
+            a list of floats to weigh each output map with.
+            The default is [0.,1.,3.].
+        threshold : float, optional
+            the value to threshold each output map with. The default is 0.8.
+
+        Returns
+        -------
+        None.
+
+        """
+        super().__init__()
+        
+        self.lambdas = tf.Variable(lambdas, trainable=False, dtype='float32')
+        self.lambdas = self.lambdas*-1
+        self.thresh = threshold
+    
+    def call(self, inputs):
+        """ the call function that returns a weighted output map for further
+        tiling
+
+        Parameters
+        ----------
+        inputs : list of tensorflow tensors
+            A 1-d list with a [BS,H,W,3] tensor
+
+        Returns
+        -------
+        inputs : TYPE
+            A [BS, H, W, 3] thresholded and weighted according to thresh, and
+            lambdas
+
+        """
+        inputs = tf.cast(inputs[0], tf.float32)
+        inputs = tf.greater_equal(inputs, self.thresh) #will return boolean values
+        inputs = tf.cast(inputs, dtype=tf.float32) #will convert bool to 0 and 1    
+        inputs = tf.multiply(inputs, self.lambdas)
+        
+        return inputs
