@@ -4,57 +4,90 @@ Created on Sun May 31 18:29:10 2020
 
 @author: Stephan
 """
-
-from tensorflow.keras import Sequential
+import tensorflow as tf
 import tensorflow.keras.layers as KL
+from tensorflow.keras import Sequential
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Activation
+#from tensorflow_addons.activations import mish
+
+
 from model.layers import qwk_act
 import efficientnet.tfkeras as efn
 from classification_models.tfkeras import Classifiers
-from model.layers import GeM, Mish
+from model.layers import GeM, Mish, mish
 import model.efficientnet_bn.tfkeras as efn_bn
+
 
 import sys
 sys.path.insert(0,'..')
 
+# ======================================
+# basic tile model classes
+# ======================================
 
-# ===================================
-# RESNEXTS
-# ===================================
-    
-class ResNext50(BaseModel):
-    
-    def __init__(self, NUM_TILES, SZ):
-        seed = 1
+class TileModel_resnets(tf.keras.Model):
 
-        self.SZ = SZ
-        self.NUM_TILES = NUM_TILES
+    def __init__(self, engine, input_shape, weights, num_tiles):
+        super(TileModel_resnets, self).__init__()
+        self.input_shapes = input_shape
+        self.num_tiles = num_tiles        
+        self.engine = engine(
+            include_top=False, input_shape=input_shape, weights=weights)
+        self.avg_pool2d = tf.keras.layers.GlobalAveragePooling2D()
+        self.dropout = tf.keras.layers.Dropout(0.5)
+        self.dense_1 = tf.keras.layers.Dense(512)
+        self.dense_2 = tf.keras.layers.Dense(1, activation='linear')
+    
+        self.out_shapes = self.engine.outputs[0].shape
         
-        ResNext50, _ = Classifiers.get('resnext50')
-        bottleneck = ResNext50(input_shape=(SZ, SZ, 3),
-                               weights='imagenet', 
-                               include_top=False)
+        
+    def call(self, inputs):
+        inputs = tf.reshape(inputs, (-1, self.input_shapes[0], self.input_shapes[1], self.input_shapes[2]))
+        x = self.engine(inputs)
+        x = tf.reshape(x, (-1, 
+                           self.num_tiles * self.out_shapes[1], 
+                           self.out_shapes[2], 
+                           self.out_shapes[3]))
+        x = self.avg_pool2d(x)
+        x = self.dropout(x)
+        x = self.dense_1(x)
+        x = mish(x)
+        return self.dense_2(x)
+    
+    
+class TileModel_efficientnets(tf.keras.Model):
+
+    def __init__(self, engine, input_shape, weights, num_tiles):
+        super(TileModel_efficientnets, self).__init__()
+        self.input_shapes = input_shape
+        self.num_tiles = num_tiles        
+        self.engine = engine(
+            include_top=False, input_shape=input_shape, weights=weights)
+        self.avg_pool2d = tf.keras.layers.GlobalAveragePooling2D()
+        self.dropout = tf.keras.layers.Dropout(0.5)
+        self.dense_1 = tf.keras.layers.Dense(512)
+        self.dense_2 = tf.keras.layers.Dense(1, activation='linear')
+        self.gem = GeM()
+        self.out_shapes = self.engine.outputs[0].shape
         
         
-        bottleneck = Model(inputs=bottleneck.inputs, 
-                           outputs=bottleneck.layers[-2].output)
-        self.model = Sequential()
-        self.model.add(KL.TimeDistributed(bottleneck, 
-                                          input_shape=(self.NUM_TILES, 
-                                                              self.SZ, 
-                                                              self.SZ, 
-                                                              3)))
-        self.model.add(KL.TimeDistributed(KL.BatchNormalization()))
-        self.model.add(KL.TimeDistributed(KL.GlobalMaxPooling2D()))
-        self.model.add(KL.Flatten())
-        self.model.add(KL.BatchNormalization())
-        self.model.add(KL.Dropout(.25, seed=seed))
-        self.model.add(KL.Dense(512, activation='elu'))
-        self.model.add(KL.BatchNormalization())
-        self.model.add(KL.Dropout(.2, seed=seed))
-        self.model.add(KL.Dense(1, activation=qwk_act, dtype='float32'))
-        
+    def call(self, inputs):
+        inputs = tf.reshape(inputs, (-1, self.input_shapes[0], self.input_shapes[1], self.input_shapes[2]))
+        x = self.engine(inputs)
+        x = tf.reshape(x, (-1, 
+                           self.num_tiles * self.out_shapes[1], 
+                           self.out_shapes[2], 
+                           self.out_shapes[3]))
+        x = self.gem(x)
+        x = self.dropout(x)
+        x = self.dense_1(x)
+        x = mish(x)
+        return self.dense_2(x)    
+
+# ========================
+# Resnext
+# ========================
 def ResNext50_bigimg(row=1536, col=1536):
 
     seed = 1
@@ -68,9 +101,12 @@ def ResNext50_bigimg(row=1536, col=1536):
     
     model = Sequential()
     model.add(bottleneck)
-    model.add(KL.ReLU())
     model.add(GeM())
     model.add(KL.Flatten())
+    model.add(KL.Dense(512, activation='linear'))
+    model.add(Activation('Mish', name="conv1_act"))
+    model.add(KL.BatchNormalization())
+    model.add(KL.Dropout(0.25))
     model.add(KL.Dense(1, activation=qwk_act, dtype='float32')) 
     
     return model
@@ -78,6 +114,10 @@ def ResNext50_bigimg(row=1536, col=1536):
 # ===================================
 # RESNETS
 # ===================================
+
+
+
+
 def ResNet34_bigimg(row=1440, col=1440):
 
     seed = 1
@@ -98,30 +138,16 @@ def ResNet34_bigimg(row=1440, col=1440):
     
     return model
 
-def ResNet34_bigimg_GeM(row=1440, col=1440):
 
-    seed = 1
-    ResNet34, _ = Classifiers.get('resnet34')
-    bottleneck = ResNet34(input_shape=(row, col, 3),
-                           weights='imagenet', 
-                           include_top=False)
+def ResNet34_tile(NUM_TILES, SZ):
+
+    engine, _ = Classifiers.get('resnet34')
     
-    bottleneck = Model(inputs=bottleneck.inputs, 
-                       outputs=bottleneck.layers[-2].output)
-    bottleneck.summary()
-    model = Sequential()
-    model.add(bottleneck)
-    model.add(KL.ReLU())
-    model.add(GeM())
-    model.add(KL.Flatten())
-    model.add(KL.Dense(1, activation=qwk_act, dtype='float32')) 
-    
+    model = TileModel_resnets(engine, (SZ, SZ, 3), 'imagenet', NUM_TILES)
+    model.build((None,SZ,SZ,3))
     return model
     
-    
 def ResNet34_bigimg_GeM_v2(row=1440, col=1440):
-
-    seed = 1
     ResNet34, _ = Classifiers.get('resnet34')
     bottleneck = ResNet34(input_shape=(row, col, 3),
                            weights='imagenet', 
@@ -143,31 +169,47 @@ def ResNet34_bigimg_GeM_v2(row=1440, col=1440):
     
     return model
 
+
+def ResNet50_bigimg(row=1536, col=1536):
+    ResNet50, _ = Classifiers.get('resnet50')
+    bottleneck = ResNet50(input_shape=(row, col, 3),
+                           weights='imagenet', 
+                           include_top=False)
+    bottleneck.summary()
+    bottleneck = Model(inputs=bottleneck.inputs, 
+                       outputs=bottleneck.layers[-2].output)
+    
+    model = Sequential()
+    model.add(bottleneck)
+    model.add(GeM())
+    model.add(KL.Flatten())
+    model.add(KL.Dense(512, activation='linear'))
+    model.add(Activation('Mish', name="conv1_act"))
+    model.add(KL.Dropout(0.25))
+    model.add(KL.Dense(1, activation=qwk_act, dtype='float32')) 
+    
+    return model
+
+def ResNet50_tile(NUM_TILES, SZ):
+    engine, _ = Classifiers.get('resnet50')
+    
+    model = TileModel_resnets(engine, (SZ, SZ, 3), 'imagenet', NUM_TILES)
+    model.build((None,SZ,SZ,3))
+    return model
+
 # ===================================
 # EFFICIENTNETS
 # ===================================
 
-def EfficientNetB1(NUM_TILES, SZ):
-    seed = 1
+def EfficientNetB0_tile(NUM_TILES, SZ):
     bottleneck = efn.EfficientNetB1( 
         include_top=False, 
         pooling='avg',
         weights='imagenet' # or 'imagenet'
     )
     
-    
-    bottleneck = Model(inputs=bottleneck.inputs, outputs=bottleneck.layers[-2].output)
-    model = Sequential()
-    model.add(KL.TimeDistributed(bottleneck, input_shape=(NUM_TILES, SZ, SZ, 3)))
-    model.add(KL.TimeDistributed(KL.BatchNormalization()))
-    model.add(KL.TimeDistributed(KL.GlobalMaxPooling2D()))
-    model.add(KL.Flatten())
-    model.add(KL.BatchNormalization())
-    model.add(KL.Dropout(.25, seed=seed))
-    model.add(KL.Dense(512, activation='elu'))
-    model.add(KL.BatchNormalization())
-    model.add(KL.Dropout(.25, seed=seed))
-    model.add(KL.Dense(1, activation=qwk_act, dtype='float32'))
+    model = TileModel_efficientnets(bottleneck, (SZ, SZ, 3), 'imagenet', NUM_TILES)
+    model.build((None,SZ,SZ,3))
     return model
     
 def EfficientNetB0_bigimg(row=1440, col=1440):

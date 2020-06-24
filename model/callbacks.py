@@ -17,6 +17,9 @@ import io
 import sys
 sys.path.insert(0, '..')
 from model.qwk_optimizer import KappaOptimizer
+from sklearn.metrics import cohen_kappa_score
+import copy
+import os
 
 # A custom callback that logs memory usage each epoch
 # TODO: case for regression (i.e. predictions are already one dimensional)
@@ -176,3 +179,53 @@ class CMCallback(Callback):
         # Add the batch dimension
         image = tf.expand_dims(image, 0)
         return image
+    
+    
+
+class CohenKappa(tf.keras.callbacks.Callback):
+    '''
+    Computes Cohen's Kappa score with quadratic weighting for one hot encoded data.
+    data is the data set to calculate scores.
+    labels is the set of labels corresponding to the data provided.
+    num_classes is the number of classes in the data.
+    file_path is the path to save model.
+    '''
+    def __init__(self,  data, labels, num_classes=6, file_path='best_weights.h5', **kwargs):
+        super(CohenKappa, self).__init__(**kwargs)
+        self.data = data
+        
+        
+        root, ext = os.path.splitext(file_path)
+        self.file_path = root + "_bestQWK" + ext
+        self.num_classes = num_classes
+        self.scores = []
+        self.y_true = labels
+
+    def on_train_begin(self, logs=None):
+        self.best = np.NINF
+
+    def on_epoch_end(self, epoch, logs=None):
+        thresholds = [0.5, 1.5, 2.5, 3.5, 4.5]
+        y_pred = self.model.predict(self.data, verbose=1)
+        y_pred = self.thresh2int(thresholds, y_pred)
+
+        QWK = cohen_kappa_score(self.y_true, y_pred, weights='quadratic')
+        if np.greater(QWK, self.best):
+            print(f'\nModel improved from {self.best} to {QWK}. Saving model to {self.file_path}')
+            self.best = QWK
+            self.model.save_weights(self.file_path)
+        else:
+            print(f'\nModel did not improve from {self.best}. Kappa score {QWK}')
+        self.scores.append(QWK)
+        
+    def thresh2int(self,thresholds, preds_raw):
+        y_hat=copy.deepcopy(preds_raw)
+
+        for i,pred in enumerate(y_hat):
+            if   pred < thresholds[0]: y_hat[i] = 0
+            elif pred < thresholds[1]: y_hat[i] = 1
+            elif pred < thresholds[2]: y_hat[i] = 2
+            elif pred < thresholds[3]: y_hat[i] = 3
+            elif pred < thresholds[4]: y_hat[i] = 4
+            else: y_hat[i] = 5
+        return y_hat.astype('int')    

@@ -50,6 +50,47 @@ print('Compute dtype: %s' % policy.compute_dtype)
 print('Variable dtype: %s' % policy.variable_dtype)
 
 
+# ==================
+# Augmentations
+# ==================
+
+def flip(image: tf.Tensor, mask: tf.Tensor) -> (tf.Tensor, tf.Tensor):
+    
+    do_flip_lr = tf.random.uniform([]) > 0.5
+    image = tf.cond(do_flip_lr, lambda: tf.image.flip_left_right(image), lambda: image)
+    mask = tf.cond(do_flip_lr, lambda: tf.image.flip_left_right(mask), lambda: mask)
+    
+    do_flip_ud = tf.random.uniform([]) > 0.5
+    image = tf.cond(do_flip_ud, lambda: tf.image.flip_up_down(image), lambda: image)
+    mask = tf.cond(do_flip_ud, lambda: tf.image.flip_up_down(mask), lambda: mask)
+    
+    return image, mask
+
+
+def rotate(x: tf.Tensor, y: tf.Tensor) -> (tf.Tensor, tf.Tensor):
+    # Rotate 0, 90, 180, 270 degrees
+    
+    rot_val = tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32, seed=1)
+    x = tf.image.rot90(x, rot_val)
+    y = tf.image.rot90(y, rot_val)
+    return x,y
+
+def brightness(x: tf.Tensor, y: tf.Tensor) -> (tf.Tensor, tf.Tensor):
+    
+
+    x = tf.image.random_brightness(x, 0.1, seed=1)
+    x = tf.clip_by_value(x,0,1)
+    return x,y
+
+def contrast(x: tf.Tensor, y: tf.Tensor) -> (tf.Tensor, tf.Tensor):
+    
+
+    x = tf.image.random_contrast(x, 0.5, 0.6, seed=1)
+    
+    return x,y 
+
+
+
 # ------------------
 # Directories
 # ------------------
@@ -110,6 +151,9 @@ def load_data(img_dir, mask_dir, data_dir, nfolds, train_fold, seed):
 
 
 def main():
+    
+    augments = [flip, rotate, contrast, brightness]
+    
     print("[!] Instantiation")
     now = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     seed_all(20)
@@ -136,7 +180,8 @@ def main():
                       filtered_mask_paths_train, 
                       filtered_data_providers_train,
                       ksize=(256, 256),
-                      mode='training')
+                      mode='training',
+                      aug_func_list=augments)
     
     train_gen = train_gen.load_process()
     
@@ -161,7 +206,7 @@ def main():
                                 save_weights_only=True)
     
     # Save based on metric
-    ckp_best_metric = ModelCheckpoint(filepath=root + "_bestQWK" + ext,
+    ckp_best_metric = ModelCheckpoint(filepath=root + "_bestIoU" + ext,
                                       monitor='val_mean_iou',
                                       verbose=1,
                                       save_best_only=True,

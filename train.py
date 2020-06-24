@@ -28,11 +28,13 @@ sys.path.insert(0, "..")
 
 # custom packages
 from preprocessing.utils.data_loader import PandasDataLoader
-from preprocessing.generators import TiffGenerator, TiffFromCoords
+from preprocessing.generators import TiffFromCoords
 from preprocessing.utils.mat_transforms import tf_tile2mat
 from utils.utils import set_gpu_memory, seed_all
 
-from model.network import NetworkNew
+from model.network import Network
+from model.callbacks import CohenKappa
+
 
 # Augmentation packages
 
@@ -55,14 +57,7 @@ from albumentations import (
 )
 
 from model.models import (
-    ResNext50,
-    EfficientNetB1,
-    EfficientNetB0_bigimg,
-    ResNext50_bigimg,
-    EfficientNetB0_bigimg_batchrenorm,
-    ResNet34_bigimg,
-    ResNet34_bigimg_GeM,
-    ResNet34_bigimg_GeM_v2
+    ResNet34_tile
 )
 
 import os
@@ -74,15 +69,15 @@ os.nice(19)
 def aug_routine(image):
     # R = Compose([RandomRotate90(p=0.5), Flip(p=0.5)])
     # S = Compose([RandomScale(scale_limit=0.1, interpolation=1, p=0.5)])
-    C = Compose([StainAugment(p=0.9)])
+    C = Compose([StainAugment(p=0.55)])
     # E = Compose([ElasticTransform(alpha=1, sigma=50, alpha_affine=50, interpolation=1, border_mode=4, p=0.5)])
 
-    BRIGHT = Compose([RandomBrightness(limit=0.08, p=0.3)])
-    CONTR = Compose([RandomContrast(limit=0.08, p=0.3)])
+    BRIGHT = Compose([RandomBrightness(limit=0.07, p=0.3)])
+    CONTR = Compose([RandomContrast(limit=0.07, p=0.3)])
 
     B = Compose([GaussianBlur(blur_limit=3, p=0.1)])
     # G = Compose([GaussNoise(var_limit=(10.0, 50.0), mean=0, p=0.5)])
-    augment = Compose([C, BRIGHT, CONTR, B], p=0.9)
+    augment = Compose([C, BRIGHT, CONTR, B], p=0.75)
     aug_op = augment(image=image)
     image = aug_op["image"]
     return image
@@ -103,40 +98,6 @@ def rotate(x: tf.Tensor) -> tf.Tensor:
 
 
 augments = [flip, rotate]
-"""
-class Config(object):
-       
-    # Dataset parameters
-    DATA_DIR = 'data'
-    IMG_DIR = 'data/train_images'
-    TRAIN_MASKS_DIR = 'data/masks'
-    SKIP_LIST = [] # What slides to not filter out (see PandasDataLoader)
-    
-    # Image parameters
-    IMG_SIZE = 256  # width and heigth of the image
-    
-    # TIFF parameters
-    TIFF_LEVEL = 1
-    NUM_CLASSES = 6 
-    
-    # Method specific parameters
-    METHOD = 'tile'
-    NUM_TILES = 16
-    
-    # TRAINING PARAMETERS
-    NFOLDS = 4    # number of folds to use for (cross validation)
-    SEED=5        # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
-    TRAIN_FOLD=0  # select the first fold for training/validation
-    BATCH_SIZE = 6
-    NUM_EPOCHS = 15  
-    LEARNING_RATE = 1e-3
-    
-    
-    MODEL = EfficientNetB1
-    MODEL_NAME = MODEL.__name__
-    MODEL = staticmethod(MODEL)
-"""
-
 
 class CoordsConfig(object):
 
@@ -158,16 +119,40 @@ class CoordsConfig(object):
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
     BATCH_SIZE = 8
-    NUM_EPOCHS = 30
-    LEARNING_RATE = 8.321687346324325e-05
-    MODEL = ResNet34_bigimg_GeM_v2
+    NUM_EPOCHS = 20
+    LEARNING_RATE = 0.0001968300188309513
+    MODEL = ResNet34_tile
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
+    
 
     # transform list of tiles to a single big image of 6x6 tiles
-    IMG_TRANSFORM_FUNC = staticmethod(partial(tf_tile2mat, row=6, col=6))
+    # adjust the row and col parameters such that row*col = MAX_TILES
+    # or num_tiles in the coordinates file
+    IMG_TRANSFORM_FUNC = None #staticmethod(partial(tf_tile2mat, row=6, col=6))
 
-    COORDS = np.load("coordinates/1-36-240-255.npy", allow_pickle=True)
+    COORDS = np.load("coordinates/1-36-256-255.npy", allow_pickle=True)
+    
+    # oversampling coefficients. If both coefficients are 0, then no sampling
+    # is used
+    # The degree of undersampling, only applies to the training generator
+    UNDERSAMPLING_COEF = 0.5
+    
+    # The degree of oversampling, only applies to the training generator
+    OVERSAMPLING_COEF = 0.9
+    
+    # the maximum number of tiles to use, has to be 0<= MAX_TILES <= num_tiles
+    # where num_tiles is specified in the coordinate file
+    MAX_TILES= 36
+    
+    # The target tiff level: will up or downsample from the coordinate tiff
+    # level towards the target. The following will be sampled up or down:
+    # coordinates, image size
+    TARGET_TIFF_LEVEL=1
+    
+    # Shuffle the coordinates as an extra form of augmentation, only applies
+    # to the training generator
+    COORD_SHUFFLE=False
 
 
 def setup(seed):
@@ -200,9 +185,15 @@ def create_split(config):
 
     fold_df = PandasDataLoader(
         images_csv_path=Path(config.DATA_DIR) / Path("train.csv"),
-        skip_csv=None, # Path(config.DATA_DIR) / Path("PANDA_Suspicious_Slides_15_05_2020.csv"),
-        skip_list=[]
+        skip_csv=Path(config.DATA_DIR) / Path("PANDA_Suspicious_Slides_15_05_2020.csv"),
+        skip_list=[
+            "marks",
+            "Background only",
+            "tiss",
+            "blank",
+        ],
     )
+
 
     # we create a possible stratification here, the options are by isup grade,
     # or further distilled by isup grade and data provider
@@ -216,7 +207,7 @@ def create_split(config):
 if __name__ == "__main__":
     
     os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-    os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    os.environ["CUDA_VISIBLE_DEVICES"]="1"
     
     config = CoordsConfig()
 
@@ -240,30 +231,31 @@ if __name__ == "__main__":
     print("using model", config.MODEL_NAME)
 
     model = config.MODEL
-    # optimizer = Adam(lr=config.LEARNING_RATE)
-    optimizer = RectifiedAdam(lr=config.LEARNING_RATE)
+    optimizer = Adam(lr=config.LEARNING_RATE)
+    #optimizer = RectifiedAdam(lr=config.LEARNING_RATE)
 
     lrreducer = ReduceLROnPlateau(
-        monitor="val_loss", factor=0.95, patience=1, verbose=1, min_lr=1e-7
+        monitor="val_loss", factor=0.90, patience=1, verbose=1, min_lr=1e-7
     )
 
-    # custom callbacks
-    custom_callbacks = [lrreducer]
+
 
     # qwk is added by default in network class
     custom_metrics = [tf.keras.metrics.RootMeanSquaredError()]
+                      
     custom_loss = tf.keras.losses.MeanSquaredError()
     
     
     # create model instance with all needed args for compile
     # i.e. model, metric, optimizer, loss
-    network = NetworkNew(model(), 
+    network = Network(model(36, 256), 
                       num_classes=config.NUM_CLASSES,
                       sparse_labels=True,
                       regression=True,
                       custom_metrics=custom_metrics,
                       custom_optimizer=optimizer,
-                      custom_loss=custom_loss)
+                      custom_loss=custom_loss,
+                      use_tf_kappa=False)
     
     network.summary()
     # get initial weights and use them at the start of each fold
@@ -294,12 +286,18 @@ if __name__ == "__main__":
         data = TiffFromCoords(
             coords=config.COORDS,
             df=train_df,
+            tiff_level=config.TARGET_TIFF_LEVEL,
             img_dir=config.IMG_DIR,
             batch_size=config.BATCH_SIZE,
+            max_num_tiles=config.MAX_TILES,
             aug_func=aug_routine,
             tf_aug_list=augments,
             one_hot=False,
             img_transform_func=config.IMG_TRANSFORM_FUNC,
+            base_sample_factor=4,
+            coord_shuffle=config.COORD_SHUFFLE,
+            undersampling_coef=config.UNDERSAMPLING_COEF,
+            oversampling_coef=config.OVERSAMPLING_COEF
         )
     
         # do not use augmentation for the val_data, if aug_func is empty
@@ -310,12 +308,19 @@ if __name__ == "__main__":
         val_data = TiffFromCoords(
             coords=config.COORDS,
             df=valid_df,
+            tiff_level=config.TARGET_TIFF_LEVEL,
             img_dir=config.IMG_DIR,
             batch_size=config.BATCH_SIZE,
+            max_num_tiles=config.MAX_TILES,
             aug_func=None,
             one_hot=False,
             img_transform_func=config.IMG_TRANSFORM_FUNC,
+            base_sample_factor=4,
+            coord_shuffle=None,
+            undersampling_coef=0,
+            oversampling_coef=0
         )
+
         
         '''
         lbl_value_counts = train_df["isup_grade"].value_counts()
@@ -324,10 +329,17 @@ if __name__ == "__main__":
         }
         print("classes weigths:", class_weights)
         '''
-        
-        network.load_weights('ResNet34_bigimg_GeM_v2_1_20200621-030427_0_epoch.h5')
         weights_fname = f"{config.MODEL_NAME}_{data.tiff_level}_{now}_{train_fold}.h5"
+        # custom callbacks
+        cohen_kappa = CohenKappa(val_data(mode='validation'),
+                                 val_data.df['isup_grade'],
+                                 file_path=weights_fname
+                                 )
+        custom_callbacks = [lrreducer, cohen_kappa]
+        
+        
         # Train the network
+        network.load_weights('ResNet34_tile_1_20200624-181149_0_epoch.h5')
         network.train(
             dataset=data(),
             val_dataset=val_data(mode="validation"),

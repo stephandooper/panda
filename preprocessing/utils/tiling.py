@@ -49,8 +49,8 @@ def tf_tile(img, shape, sz=128, N=16, pad_val=255):
     # Pad the image into size [W + pad0, H + pad1, C]
     # from now on: W = W + pad0, H = H + pad1
     img = tf.pad(img,
-                 [[pad0 // 2, pad0 - pad0 // 2],
-                  [pad1 // 2, pad1 - pad1 // 2],
+                 [[0, pad0],
+                  [0, pad1],
                   [0, 0]],
                  constant_values=pad_val)
 
@@ -120,8 +120,8 @@ def tile(img,sz, N, pad_val):
     # Pad the image into size [W + pad0, H + pad1, C]
     # from now on: W = W + pad0, H = H + pad1
     img = np.pad(img,
-                 [[pad0 // 2, pad0 - pad0 // 2],
-                  [pad1 // 2, pad1 - pad1 // 2],
+                 [[0, pad0],
+                  [0, pad1],
                   [0, 0]],
                  constant_values=pad_val)
     
@@ -164,8 +164,8 @@ def get_tile_coords(img, sz, N, pad_val):
     # Pad the image into size [W + pad0, H + pad1, C]
     # from now on: W = W + pad0, H = H + pad1
     img = np.pad(img,
-                 [[pad0 // 2, pad0 - pad0 // 2],
-                  [pad1 // 2, pad1 - pad1 // 2],
+                 [[0, pad0],
+                  [0, pad1],
                   [0, 0]],
                  constant_values=pad_val)
 

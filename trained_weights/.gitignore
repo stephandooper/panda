@@ -1,8 +1,2 @@
 # Ignore everything in this directory
-*.h5
-*.zip
-
-efficientnetb0
-efficientnetb1
-resnet34
-
+*

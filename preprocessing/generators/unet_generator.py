@@ -28,7 +28,8 @@ class UNETGenerator(object):
                  data_providers=None,
                  tiff_level=2,
                  ksize=(512, 512),
-                 mode = 'training'):
+                 mode = 'training',
+                 aug_func_list=[]):
         
         assert mode in ('training', 'validation', 'inference')
         
@@ -42,6 +43,7 @@ class UNETGenerator(object):
         self.paths = tf.data.Dataset.from_tensor_slices(self.paths)
         self.tiff_level = tiff_level
         self.ksize = ksize
+        self.aug_func_list = aug_func_list
     
     def _read_img(self, path):
         # decode byte string
@@ -207,7 +209,7 @@ class UNETGenerator(object):
                                   [tf.float32, tf.int64])
 
         image, crops = image[0], image[1]
-        return image, crops
+        return image, crops, path
     
     @staticmethod
     def crop(image, crop_coords):
@@ -217,25 +219,30 @@ class UNETGenerator(object):
     
     def load_process(self, batch_size=16):
         # shuffling array of strings: not all that intensive
-        
+        AUTOTUNE = tf.data.experimental.AUTOTUNE
+
         if self.mode=='training' or self.mode=='validation':
             ds = self.paths.shuffle(buffer_size=5000)
 
             # parse image and masks
-            ds = ds.map(self.parse_img_mask)
+            ds = ds.map(self.parse_img_mask, num_parallel_calls=AUTOTUNE)
 
             # create patches from full images
-            ds = ds.map(self.create_patches)
+            ds = ds.map(self.create_patches, num_parallel_calls=AUTOTUNE)
 
             # filter out empty images/masks, this can probably be done better
             ds = ds.filter(lambda x,y: tf.rank(x) > 3)
 
             # set the shape: losses/metrics don't like undefined shapes
-            ds = ds.map(self.set_shape)
+            ds = ds.map(self.set_shape, num_parallel_calls=AUTOTUNE)
 
             # decouple the image in smaller non related batches
             ds = ds.unbatch()
-
+            
+            for f in self.aug_func_list:
+                ds = ds.map(lambda x,y: (f(x,y)), num_parallel_calls=AUTOTUNE)
+            
+            
             # shuffle images, not many
             ds = ds.shuffle(buffer_size=500)
 
@@ -247,6 +254,6 @@ class UNETGenerator(object):
                 ds = ds.repeat()
             
         elif self.mode=='inference':
-            ds = self.paths.map(self.inference)          
+            ds = self.paths.map(self.inference, num_parallel_calls=AUTOTUNE)          
             ds = ds.batch(1)
         return ds
