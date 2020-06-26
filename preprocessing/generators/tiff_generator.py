@@ -304,7 +304,11 @@ class TiffGenerator(object):
         return next(self._ds_iter)
    
     # TODO: refactor for tissue detect
-    def display_batch(self, batch=None, plot_grid = (4,4), rows=None, cols=None):
+    def display_batch(self, batch=None, 
+                      plot_grid = (4,4), 
+                      rows=None, 
+                      cols=None,
+                      invert=True):
         """ Plot a batch of images.
         
         Parameters
@@ -325,6 +329,8 @@ class TiffGenerator(object):
         # Loop over the batch (rows) and num_tiles (columns) and display
         img_batch, label_batch = batch
         img_batch = img_batch.numpy()
+        if invert:
+            img_batch = 1-img_batch
         label_batch = label_batch.numpy()
         
         if self.one_hot:
@@ -759,7 +765,7 @@ class TiffFromCoords(TiffGenerator):
         else:
             ds = self.image_ids
 
-        ds = ds.map(self._parse_img_label, num_parallel_calls=1)
+        ds = ds.map(self._parse_img_label, num_parallel_calls=AUTOTUNE)
         #ds = ds.map(tile_aug(), num_parallel_calls=AUTOTUNE)
         # map before batch here: we do not want to load giant images in batch before preprocessing into tiles
 

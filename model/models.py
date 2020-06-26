@@ -63,27 +63,51 @@ class TileModel_efficientnets(tf.keras.Model):
         self.input_shapes = input_shape
         self.num_tiles = num_tiles        
         self.engine = engine(
-            include_top=False, input_shape=input_shape, weights=weights)
-        self.avg_pool2d = tf.keras.layers.GlobalAveragePooling2D()
-        self.dropout = tf.keras.layers.Dropout(0.5)
-        self.dense_1 = tf.keras.layers.Dense(512)
-        self.dense_2 = tf.keras.layers.Dense(1, activation='linear')
+            include_top=False, 
+            pooling=None, 
+            input_shape=input_shape, 
+            weights=weights)
+        
+        
+        
+        #self.avg_pool2d = tf.keras.layers.GlobalAveragePooling2D()
         self.gem = GeM()
+        self.flatten = tf.keras.layers.Flatten()
+        self.dropout = tf.keras.layers.Dropout(0.25)
+        self.dense_1 = tf.keras.layers.Dense(512)        
+        self.dense_2 = tf.keras.layers.Dense(1, activation='linear')
         self.out_shapes = self.engine.outputs[0].shape
+            
+    def call(self, inputs):    
         
-        
-    def call(self, inputs):
+        # From [Bs, num_tiles, h, w ,c] -> [BS* num_tiles, h, w, c]
         inputs = tf.reshape(inputs, (-1, self.input_shapes[0], self.input_shapes[1], self.input_shapes[2]))
+        
+        # pass through backend model
         x = self.engine(inputs)
+        
+        # reshape to [bs, num_tiles*H, W, c]
         x = tf.reshape(x, (-1, 
                            self.num_tiles * self.out_shapes[1], 
                            self.out_shapes[2], 
                            self.out_shapes[3]))
+        # pass through pooling + dense layers
         x = self.gem(x)
+        x = self.flatten(x)
         x = self.dropout(x)
         x = self.dense_1(x)
         x = mish(x)
-        return self.dense_2(x)    
+        return self.dense_2(x)
+    
+    def build_graph(self, input_shape): 
+        input_shape_nobatch = input_shape[1:]
+        self.build(input_shape)
+        inputs = tf.keras.Input(shape=input_shape_nobatch)
+        
+        if not hasattr(self, 'call'):
+            raise AttributeError("User should define 'call' method in sub-class model!")
+        
+        _ = self.call(inputs)
 
 # ========================
 # Resnext
@@ -202,11 +226,7 @@ def ResNet50_tile(NUM_TILES, SZ):
 # ===================================
 
 def EfficientNetB0_tile(NUM_TILES, SZ):
-    bottleneck = efn.EfficientNetB1( 
-        include_top=False, 
-        pooling='avg',
-        weights='imagenet' # or 'imagenet'
-    )
+    bottleneck = efn.EfficientNetB0
     
     model = TileModel_efficientnets(bottleneck, (SZ, SZ, 3), 'imagenet', NUM_TILES)
     model.build((None,SZ,SZ,3))

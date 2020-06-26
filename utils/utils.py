@@ -53,4 +53,3 @@ def set_gpu_memory(num_gpu=1, device_type='GPU'):
             # Memory growth must be set before GPUs have been initialized
             print(e)
 
-

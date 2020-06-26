@@ -6,6 +6,11 @@ Created on Sun May 31 15:36:03 2020
 """
 
 # load tensorflow dependencies
+import os
+# this isnt urgent
+os.nice(19)
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="0" # second gpu
 import tensorflow as tf
 from tensorflow.keras.optimizers import Adam
 from tensorflow_addons.optimizers import RectifiedAdam
@@ -24,23 +29,28 @@ import datetime
 import numpy as np
 from functools import partial
 
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import cohen_kappa_score
+from sklearn.metrics import ConfusionMatrixDisplay
+
 sys.path.insert(0, "..")
 
 # custom packages
 from preprocessing.utils.data_loader import PandasDataLoader
 from preprocessing.generators import TiffFromCoords
 from preprocessing.utils.mat_transforms import tf_tile2mat
+from preprocessing.utils.thresh2int import thresh2int
 from utils.utils import set_gpu_memory, seed_all
 
 from model.network import Network
 from model.callbacks import CohenKappa
-
 
 # Augmentation packages
 
 # custom stain augmentation
 from preprocessing.augmentations import StainAugment
 import albumentations as A
+
 from albumentations import (
     Flip,
     ShiftScaleRotate,
@@ -57,14 +67,9 @@ from albumentations import (
 )
 
 from model.models import (
-    ResNet34_tile
+    ResNet34_tile,
+    EfficientNetB0_tile
 )
-
-import os
-
-# this isnt urgent
-os.nice(19)
-
 
 def aug_routine(image):
     # R = Compose([RandomRotate90(p=0.5), Flip(p=0.5)])
@@ -96,7 +101,6 @@ def rotate(x: tf.Tensor) -> tf.Tensor:
         x, tf.random.uniform(shape=[], minval=0, maxval=4, dtype=tf.int32, seed=1)
     )
 
-
 augments = [flip, rotate]
 
 class CoordsConfig(object):
@@ -118,10 +122,10 @@ class CoordsConfig(object):
         5  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
-    BATCH_SIZE = 8
+    BATCH_SIZE = 11
     NUM_EPOCHS = 20
-    LEARNING_RATE = 0.0001968300188309513
-    MODEL = ResNet34_tile
+    LEARNING_RATE = 1e-3
+    MODEL = EfficientNetB0_tile
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
     
@@ -131,19 +135,19 @@ class CoordsConfig(object):
     # or num_tiles in the coordinates file
     IMG_TRANSFORM_FUNC = None #staticmethod(partial(tf_tile2mat, row=6, col=6))
 
-    COORDS = np.load("coordinates/1-36-256-255.npy", allow_pickle=True)
+    COORDS = np.load("coordinates/UNET-2-36-64-255.npy", allow_pickle=True)
     
     # oversampling coefficients. If both coefficients are 0, then no sampling
     # is used
     # The degree of undersampling, only applies to the training generator
-    UNDERSAMPLING_COEF = 0.5
+    UNDERSAMPLING_COEF = 0.4
     
     # The degree of oversampling, only applies to the training generator
     OVERSAMPLING_COEF = 0.9
     
     # the maximum number of tiles to use, has to be 0<= MAX_TILES <= num_tiles
     # where num_tiles is specified in the coordinate file
-    MAX_TILES= 36
+    MAX_TILES= 16
     
     # The target tiff level: will up or downsample from the coordinate tiff
     # level towards the target. The following will be sampled up or down:
@@ -186,15 +190,10 @@ def create_split(config):
     fold_df = PandasDataLoader(
         images_csv_path=Path(config.DATA_DIR) / Path("train.csv"),
         skip_csv=Path(config.DATA_DIR) / Path("PANDA_Suspicious_Slides_15_05_2020.csv"),
-        skip_list=[
-            "marks",
-            "Background only",
-            "tiss",
-            "blank",
-        ],
+        skip_list= ["Background only", "tiss", "blank",],
     )
 
-
+    #skip_list = ["marks", "Background only",     "tiss",    "blank",]
     # we create a possible stratification here, the options are by isup grade,
     # or further distilled by isup grade and data provider
     # stratified_isup_sample or stratified_isup_dp_sample, we use the latter.
@@ -205,10 +204,7 @@ def create_split(config):
 
 
 if __name__ == "__main__":
-    
-    os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-    os.environ["CUDA_VISIBLE_DEVICES"]="1"
-    
+        
     config = CoordsConfig()
 
     # seed, fp16 training,
@@ -238,8 +234,6 @@ if __name__ == "__main__":
         monitor="val_loss", factor=0.90, patience=1, verbose=1, min_lr=1e-7
     )
 
-
-
     # qwk is added by default in network class
     custom_metrics = [tf.keras.metrics.RootMeanSquaredError()]
                       
@@ -248,7 +242,7 @@ if __name__ == "__main__":
     
     # create model instance with all needed args for compile
     # i.e. model, metric, optimizer, loss
-    network = Network(model(36, 256), 
+    network = Network(model(config.MAX_TILES, 256), 
                       num_classes=config.NUM_CLASSES,
                       sparse_labels=True,
                       regression=True,
@@ -337,9 +331,9 @@ if __name__ == "__main__":
                                  )
         custom_callbacks = [lrreducer, cohen_kappa]
         
-        
+        #network.load_weights('EfficientNetB0_tile_2_20200625-203141_0_epoch.h5')
         # Train the network
-        network.load_weights('ResNet34_tile_1_20200624-181149_0_epoch.h5')
+
         network.train(
             dataset=data(),
             val_dataset=val_data(mode="validation"),
@@ -349,3 +343,74 @@ if __name__ == "__main__":
             save_weights_name=weights_fname,
             tb_logdir=f"./logs/{config.MODEL_NAME}",
         )
+        
+
+        # =====================
+        # validation
+        # ======================
+        thresholds = [0.5, 1.5, 2.5, 3.5, 4.5]
+
+        print("predicting cohen kappa score")
+        radboud_valid_df = valid_df[valid_df['data_provider'] == 'radboud']
+        
+        karolinska_valid_df = valid_df[valid_df['data_provider'] == 'karolinska']
+
+        val_data_radboud = TiffFromCoords(  coords=config.COORDS,
+                                            df=radboud_valid_df,
+                                            tiff_level=config.TARGET_TIFF_LEVEL,
+                                            img_dir=config.IMG_DIR,
+                                            batch_size=config.BATCH_SIZE,
+                                            max_num_tiles=config.MAX_TILES,
+                                            aug_func=None,
+                                            one_hot=False,
+                                            img_transform_func=config.IMG_TRANSFORM_FUNC,
+                                            base_sample_factor=4,
+                                            coord_shuffle=None,
+                                            undersampling_coef=0,
+                                            oversampling_coef=0
+                                        )
+        
+        val_data_karolinska = TiffFromCoords(coords=config.COORDS,
+                                            df=karolinska_valid_df,
+                                            tiff_level=config.TARGET_TIFF_LEVEL,
+                                            img_dir=config.IMG_DIR,
+                                            batch_size=config.BATCH_SIZE,
+                                            max_num_tiles=config.MAX_TILES,
+                                            aug_func=None,
+                                            one_hot=False,
+                                            img_transform_func=config.IMG_TRANSFORM_FUNC,
+                                            base_sample_factor=4,
+                                            coord_shuffle=None,
+                                            undersampling_coef=0,
+                                            oversampling_coef=0
+                                        )
+
+        preds_radboud = network.predict(val_data_radboud(mode='validation'),verbose=1)
+        preds_karolinska = network.predict(val_data_karolinska(mode='validation'),verbose=1)
+        
+        preds_isup_radboud = thresh2int(thresholds, preds_radboud)
+        isups_radboud = [int(x) for x in val_data_radboud.df['isup_grade'].to_list()]
+        tuples_radboud = val_data_radboud.image_ids
+
+
+        preds_isup_karolinska = thresh2int(thresholds, preds_karolinska)
+        isups_karolinska = [int(x) for x in val_data_karolinska.df['isup_grade'].to_list()]
+        tuples_karolinska = val_data_karolinska.image_ids
+
+        all_isups = np.concatenate((np.array(isups_radboud), np.array(isups_karolinska)))
+        all_preds = np.concatenate((preds_isup_radboud, preds_isup_karolinska))
+
+        cm_radboud = confusion_matrix(isups_radboud,preds_isup_radboud ,normalize='true')
+        ConfusionMatrixDisplay(cm_radboud,display_labels=['0','1','2','3','4','5']).plot()
+
+        cm_karolinska = confusion_matrix(isups_karolinska,preds_isup_karolinska ,normalize='true')
+        ConfusionMatrixDisplay(cm_karolinska,display_labels=['0','1','2','3','4','5']).plot()
+
+        cm_all = confusion_matrix(all_isups, all_preds ,normalize='true')
+        ConfusionMatrixDisplay(cm_all,display_labels=['0','1','2','3','4','5']).plot()
+        
+        print("karolinska", cohen_kappa_score(isups_karolinska, preds_isup_karolinska, weights='quadratic'))
+        print("radboud", cohen_kappa_score(isups_radboud, preds_isup_radboud, weights='quadratic'))
+        print("total", cohen_kappa_score(all_isups,
+                                         all_preds,
+                                         weights='quadratic'))
