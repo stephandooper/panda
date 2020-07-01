@@ -457,6 +457,8 @@ class TiffFromCoords(TiffGenerator):
             A dataframe containing the image ids and isup grades
         img_dir : string or pathlib object
             The path to the image directory
+        tiff_level : int
+            The target tiff level
         batch_size : int, optional
             The batch size for training. The default is 8.
         max_num_tiles: int, optional

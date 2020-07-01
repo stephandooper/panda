@@ -68,21 +68,23 @@ from albumentations import (
 
 from model.models import (
     ResNet34_tile,
-    EfficientNetB0_tile
+    EfficientNetB0_tile,
+    EfficientNetB1_tile,
+    ResNext50_tile
 )
 
 def aug_routine(image):
     # R = Compose([RandomRotate90(p=0.5), Flip(p=0.5)])
     # S = Compose([RandomScale(scale_limit=0.1, interpolation=1, p=0.5)])
-    C = Compose([StainAugment(p=0.55)])
+    C = Compose([StainAugment(p=0.7)])
     # E = Compose([ElasticTransform(alpha=1, sigma=50, alpha_affine=50, interpolation=1, border_mode=4, p=0.5)])
 
-    BRIGHT = Compose([RandomBrightness(limit=0.07, p=0.3)])
-    CONTR = Compose([RandomContrast(limit=0.07, p=0.3)])
+    BRIGHT = Compose([RandomBrightness(limit=0.03, p=0.5)])
+    CONTR = Compose([RandomContrast(limit=0.03, p=0.5)])
 
     B = Compose([GaussianBlur(blur_limit=3, p=0.1)])
-    # G = Compose([GaussNoise(var_limit=(10.0, 50.0), mean=0, p=0.5)])
-    augment = Compose([C, BRIGHT, CONTR, B], p=0.75)
+    G = Compose([GaussNoise(var_limit=(10.0, 20.0), mean=0, p=0.1)])
+    augment = Compose([C, BRIGHT, CONTR], p=0.75)
     aug_op = augment(image=image)
     image = aug_op["image"]
     return image
@@ -93,7 +95,6 @@ def flip(x: tf.Tensor) -> tf.Tensor:
     x = tf.image.random_flip_up_down(x, seed=1)
 
     return x
-
 
 def rotate(x: tf.Tensor) -> tf.Tensor:
     # Rotate 0, 90, 180, 270 degrees
@@ -122,32 +123,38 @@ class CoordsConfig(object):
         5  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
-    BATCH_SIZE = 11
+    BATCH_SIZE = 5
     NUM_EPOCHS = 20
-    LEARNING_RATE = 1e-3
-    MODEL = EfficientNetB0_tile
+    LEARNING_RATE = 3e-4
+    MODEL = EfficientNetB1_tile
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
     
-
     # transform list of tiles to a single big image of 6x6 tiles
     # adjust the row and col parameters such that row*col = MAX_TILES
     # or num_tiles in the coordinates file
     IMG_TRANSFORM_FUNC = None #staticmethod(partial(tf_tile2mat, row=6, col=6))
+    
+    AUG_ROUTINE=staticmethod(aug_routine)
+    TILE_AUGMENTS=augments
 
-    COORDS = np.load("coordinates/UNET-2-36-64-255.npy", allow_pickle=True)
+    COORDS = np.load("coordinates/1-36-256-255.npy", allow_pickle=True)
     
     # oversampling coefficients. If both coefficients are 0, then no sampling
     # is used
     # The degree of undersampling, only applies to the training generator
-    UNDERSAMPLING_COEF = 0.4
+    UNDERSAMPLING_COEF = 0.1
     
     # The degree of oversampling, only applies to the training generator
     OVERSAMPLING_COEF = 0.9
     
     # the maximum number of tiles to use, has to be 0<= MAX_TILES <= num_tiles
     # where num_tiles is specified in the coordinate file
-    MAX_TILES= 16
+    MAX_TILES= 25
+    
+    # set this number to the desired image size (CANNOT BE CHOSEN FREELY
+    # WHEN USING COORDINATE FILES)
+    SZ  = 256
     
     # The target tiff level: will up or downsample from the coordinate tiff
     # level towards the target. The following will be sampled up or down:
@@ -227,13 +234,15 @@ if __name__ == "__main__":
     print("using model", config.MODEL_NAME)
 
     model = config.MODEL
-    optimizer = Adam(lr=config.LEARNING_RATE)
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(config.LEARNING_RATE, 1.0, 0.85)
+    optimizer = tf.keras.optimizers.Adam(config.LEARNING_RATE)
     #optimizer = RectifiedAdam(lr=config.LEARNING_RATE)
 
     lrreducer = ReduceLROnPlateau(
         monitor="val_loss", factor=0.90, patience=1, verbose=1, min_lr=1e-7
     )
-
+    
+    
     # qwk is added by default in network class
     custom_metrics = [tf.keras.metrics.RootMeanSquaredError()]
                       
@@ -242,7 +251,7 @@ if __name__ == "__main__":
     
     # create model instance with all needed args for compile
     # i.e. model, metric, optimizer, loss
-    network = Network(model(config.MAX_TILES, 256), 
+    network = Network(model(config.MAX_TILES, config.SZ), 
                       num_classes=config.NUM_CLASSES,
                       sparse_labels=True,
                       regression=True,
@@ -255,7 +264,6 @@ if __name__ == "__main__":
     # get initial weights and use them at the start of each fold
     # Clearing TF/keras graph still has a lot of issues (freeing VRAM)
     init_weights = network.get_weights()
-    
     
     fold_df = create_split(config)
     
@@ -284,8 +292,8 @@ if __name__ == "__main__":
             img_dir=config.IMG_DIR,
             batch_size=config.BATCH_SIZE,
             max_num_tiles=config.MAX_TILES,
-            aug_func=aug_routine,
-            tf_aug_list=augments,
+            aug_func=config.AUG_ROUTINE,
+            tf_aug_list=config.TILE_AUGMENTS,
             one_hot=False,
             img_transform_func=config.IMG_TRANSFORM_FUNC,
             base_sample_factor=4,
@@ -329,11 +337,11 @@ if __name__ == "__main__":
                                  val_data.df['isup_grade'],
                                  file_path=weights_fname
                                  )
-        custom_callbacks = [lrreducer, cohen_kappa]
+        custom_callbacks = [cohen_kappa, lrreducer]
         
-        #network.load_weights('EfficientNetB0_tile_2_20200625-203141_0_epoch.h5')
+        #network.load_weights('EfficientNetB0_tile_1_20200701-001507_0_epoch.h5')
+        
         # Train the network
-
         network.train(
             dataset=data(),
             val_dataset=val_data(mode="validation"),
@@ -401,13 +409,13 @@ if __name__ == "__main__":
         all_preds = np.concatenate((preds_isup_radboud, preds_isup_karolinska))
 
         cm_radboud = confusion_matrix(isups_radboud,preds_isup_radboud ,normalize='true')
-        ConfusionMatrixDisplay(cm_radboud,display_labels=['0','1','2','3','4','5']).plot()
+        print("cm radboud", cm_radboud)
 
         cm_karolinska = confusion_matrix(isups_karolinska,preds_isup_karolinska ,normalize='true')
-        ConfusionMatrixDisplay(cm_karolinska,display_labels=['0','1','2','3','4','5']).plot()
+        print("cm karolinska", cm_karolinska)
 
         cm_all = confusion_matrix(all_isups, all_preds ,normalize='true')
-        ConfusionMatrixDisplay(cm_all,display_labels=['0','1','2','3','4','5']).plot()
+        print("cm all", cm_all)
         
         print("karolinska", cohen_kappa_score(isups_karolinska, preds_isup_karolinska, weights='quadratic'))
         print("radboud", cohen_kappa_score(isups_radboud, preds_isup_radboud, weights='quadratic'))
