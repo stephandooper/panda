@@ -70,6 +70,7 @@ from model.models import (
     ResNet34_tile,
     EfficientNetB0_tile,
     EfficientNetB1_tile,
+    EfficientNetB0_tileV2,
     ResNext50_tile
 )
 
@@ -123,10 +124,10 @@ class CoordsConfig(object):
         5  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
-    BATCH_SIZE = 5
+    BATCH_SIZE = 7
     NUM_EPOCHS = 20
-    LEARNING_RATE = 3e-4
-    MODEL = EfficientNetB1_tile
+    LEARNING_RATE = 2.0e-05
+    MODEL = EfficientNetB0_tileV2
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
     
@@ -135,7 +136,7 @@ class CoordsConfig(object):
     # or num_tiles in the coordinates file
     IMG_TRANSFORM_FUNC = None #staticmethod(partial(tf_tile2mat, row=6, col=6))
     
-    AUG_ROUTINE=staticmethod(aug_routine)
+    AUG_ROUTINE= staticmethod(aug_routine)
     TILE_AUGMENTS=augments
 
     COORDS = np.load("coordinates/1-36-256-255.npy", allow_pickle=True)
@@ -339,7 +340,7 @@ if __name__ == "__main__":
                                  )
         custom_callbacks = [cohen_kappa, lrreducer]
         
-        #network.load_weights('EfficientNetB0_tile_1_20200701-001507_0_epoch.h5')
+        network.load_weights('EfficientNetB0_tileV2_1_20200702-024927_0_epoch.h5')
         
         # Train the network
         network.train(

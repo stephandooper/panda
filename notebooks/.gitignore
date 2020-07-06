@@ -1,7 +1,12 @@
 # Exclude hdf5 and tf files
-
 *.h5
 /logs*
 
+# Exclude the following directories:
+/Panda*
+
+
+
 # Exclude python outputs
 .ipynb_checkpoints
+

@@ -123,3 +123,16 @@ class WeightLayer(tf.keras.layers.Layer):
         inputs = tf.multiply(inputs, self.lambdas)
         
         return inputs
+        
+class WeightedSoftMax(tf.keras.layers.Layer):
+    def __init__(self):
+        super(WeightedSoftMax, self).__init__()
+        
+        self.fixed_weights = tf.Variable(tf.constant([0., 1., 2., 3., 4., 5.]), trainable=False)
+        self.fixed_weights = self.fixed_weights[tf.newaxis,...]
+        #print("fixed weights shape", self.fixed_weights.shape)
+        
+    def call(self, inputs):
+        inputs = tf.cast(inputs, tf.float32)
+        #print("inputs shape",inputs.shape)
+        return tf.matmul(inputs, tf.transpose(self.fixed_weights))

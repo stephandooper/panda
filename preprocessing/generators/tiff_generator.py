@@ -500,7 +500,7 @@ class TiffFromCoords(TiffGenerator):
         self.df = df
         self.img_dir = img_dir
         self.target_tiff_level = tiff_level
-        
+        self.num_classes = df['isup_grade'].nunique()
         self.tiff_level = coords['TIFF_LEVEL']
         self.img_size = coords['IMG_SIZE']
         self.pad_val = coords['PAD_VAL']
@@ -515,6 +515,7 @@ class TiffFromCoords(TiffGenerator):
         self.aug_func = aug_func
         self.one_hot=one_hot
         self.tf_aug_list=tf_aug_list
+        
         
         self.img_transform_func = img_transform_func
         
@@ -535,11 +536,22 @@ class TiffFromCoords(TiffGenerator):
         self.target_img_size = int(self.img_size * self.sample_factor)
         
         # statistics for over/undersampling
-        lbl_value_counts = df["isup_grade"].value_counts()
+        # Count number of examples per isup grade
+        lbl_value_counts = self.df["isup_grade"].value_counts()
+        # Get the distinct isup grades
+        isups = lbl_value_counts.index.to_numpy().astype('int')
+        
+        # frequency per isup grade
         lbl_probs = lbl_value_counts / sum(lbl_value_counts)
-        data_probs = pd.DataFrame({'class_prob': lbl_probs, 'isup_grade': [0,1,2,3,4,5]})
+        
+        # turn it into a dataframe
+        data_probs = pd.DataFrame({'class_prob': lbl_probs, 'isup_grade': isups})
+        
+        # merge with the original dataframe
         self.df = self.df.merge(data_probs, on='isup_grade')
-        self.df['class_target_prob'] = 1/6
+        
+        # the desired probabilities: equal sampling
+        self.df['class_target_prob'] = 1 / self.num_classes
         
         # modify the image_id column to full paths
         image_ids = [self.img_dir +'/' + x + '.tiff' for x in self.df['image_id'].tolist()]
@@ -605,7 +617,6 @@ class TiffFromCoords(TiffGenerator):
                 A [NUM_TILES, H, W, C] numpy array containing the image patch
 
             """
-            
             result = []
             # decode byte string
             path = path.decode('utf8')

@@ -15,7 +15,7 @@ from tensorflow.keras.layers import Activation
 from model.layers import qwk_act
 import efficientnet.tfkeras as efn
 from classification_models.tfkeras import Classifiers
-from model.layers import GeM, Mish, mish
+from model.layers import GeM, Mish, mish, WeightedSoftMax
 
 
 import sys
@@ -111,7 +111,6 @@ class TileModel_efficientnets(tf.keras.Model):
         
     
 class TileModel_efficientnetsV2(tf.keras.Model):
-
     def __init__(self, engine, input_shape, weights, num_tiles):
         super(TileModel_efficientnetsV2, self).__init__()
         self.input_shapes = input_shape
@@ -122,14 +121,13 @@ class TileModel_efficientnetsV2(tf.keras.Model):
             input_shape=input_shape, 
             weights=weights)
         
-        
-        
         #self.avg_pool2d = tf.keras.layers.GlobalAveragePooling2D()
         self.gem = GeM()
         self.flatten = tf.keras.layers.Flatten()
-        self.dropout = tf.keras.layers.Dropout(0.25)
+        self.dropout = tf.keras.layers.Dropout(0.01)
         self.dense_1 = tf.keras.layers.Dense(512)        
-        self.dense_2 = tf.keras.layers.Dense(6, activation='sigmoid')
+        self.dense_2 = tf.keras.layers.Dense(6, activation='softmax')
+        self.output_layer = WeightedSoftMax()
         self.out_shapes = self.engine.outputs[0].shape
             
     def call(self, inputs):    
@@ -151,22 +149,8 @@ class TileModel_efficientnetsV2(tf.keras.Model):
         x = self.dropout(x)
         x = self.dense_1(x)
         x = mish(x)
-        # sigmoid over 6 classes, the idea is similar to label binning
-        # and maps the unbounded range to [0,5]
         x = self.dense_2(x)
-        # sum the sigmoid elements together to get a class score
-        x = tf.reduce_sum(x, axis=1)
-        return tf.expand_dims(x,1)
-    
-    def build_graph(self, input_shape): 
-        input_shape_nobatch = input_shape[1:]
-        self.build(input_shape)
-        inputs = tf.keras.Input(shape=input_shape_nobatch)
-        
-        if not hasattr(self, 'call'):
-            raise AttributeError("User should define 'call' method in sub-class model!")
-        
-        _ = self.call(inputs)
+        return self.output_layer(x)
 
 
 # ========================
@@ -301,6 +285,13 @@ def EfficientNetB0_tile(NUM_TILES, SZ):
     bottleneck = efn.EfficientNetB0
     
     model = TileModel_efficientnets(bottleneck, (SZ, SZ, 3), 'imagenet', NUM_TILES)
+    model.build((None,SZ,SZ,3))
+    return model
+    
+def EfficientNetB0_tileV2(NUM_TILES, SZ):
+    bottleneck = efn.EfficientNetB0
+    
+    model = TileModel_efficientnetsV2(bottleneck, (SZ, SZ, 3), 'imagenet', NUM_TILES)
     model.build((None,SZ,SZ,3))
     return model
     
