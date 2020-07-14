@@ -37,7 +37,10 @@ def mish(inputs):
     return inputs * tf.math.tanh(tf.math.softplus(inputs))
 
 get_custom_objects().update({'Mish': Mish(mish)})        
-        
+
+def customsigmoid(inputs):
+    return 5 * tf.math.sigmoid(inputs)
+ 
 class GeM(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super(GeM, self).__init__(**kwargs)
@@ -128,11 +131,20 @@ class WeightedSoftMax(tf.keras.layers.Layer):
     def __init__(self):
         super(WeightedSoftMax, self).__init__()
         
-        self.fixed_weights = tf.Variable(tf.constant([0., 1., 2., 3., 4., 5.]), trainable=False)
+        self.fixed_weights = tf.Variable(tf.ones(6), trainable=True)
         self.fixed_weights = self.fixed_weights[tf.newaxis,...]
         #print("fixed weights shape", self.fixed_weights.shape)
         
     def call(self, inputs):
         inputs = tf.cast(inputs, tf.float32)
         #print("inputs shape",inputs.shape)
-        return tf.matmul(inputs, tf.transpose(self.fixed_weights))
+        return 5 * tf.math.sigmoid(tf.matmul(inputs, tf.transpose(self.fixed_weights)))
+        
+        
+class Sum(tf.keras.layers.Layer):
+    def __init__(self):
+        super(Sum, self).__init__()
+        
+    def call(self, inputs):
+        inputs = tf.cast(inputs, tf.float32)
+        return tf.math.reduce_sum(inputs, axis=1)

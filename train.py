@@ -71,7 +71,11 @@ from model.models import (
     EfficientNetB0_tile,
     EfficientNetB1_tile,
     EfficientNetB0_tileV2,
-    ResNext50_tile
+    ResNext50_tile,
+    EfficientNetB0_bigimg_softmax,
+    ResNet34_bigimg_softmax,
+    ResNet34_bigimg_softmaxV2,
+    ResNet34_bigimg_softmaxV2_bnfalse
 )
 
 def aug_routine(image):
@@ -119,24 +123,24 @@ class CoordsConfig(object):
     NUM_CLASSES = 6
 
     # TRAINING PARAMETERS
-    NFOLDS = 4  # number of folds to use for (cross validation)
+    NFOLDS = 5  # number of folds to use for (cross validation)
     SEED = (
-        5  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
+        0  # the seed TODO: REPLACE THIS WITH A FUNCTION THAT SEEDS EVERYTHING WITH SEED
     )
     TRAIN_FOLD = 0  # select the first fold for training/validation
-    BATCH_SIZE = 7
-    NUM_EPOCHS = 20
-    LEARNING_RATE = 2.0e-05
-    MODEL = EfficientNetB0_tileV2
+    BATCH_SIZE = 8
+    NUM_EPOCHS = 40
+    LEARNING_RATE = 1e-4
+    MODEL = ResNet34_bigimg_softmaxV2
     MODEL_NAME = MODEL.__name__
     MODEL = staticmethod(MODEL)
     
     # transform list of tiles to a single big image of 6x6 tiles
     # adjust the row and col parameters such that row*col = MAX_TILES
     # or num_tiles in the coordinates file
-    IMG_TRANSFORM_FUNC = None #staticmethod(partial(tf_tile2mat, row=6, col=6))
+    IMG_TRANSFORM_FUNC = staticmethod(partial(tf_tile2mat, row=6, col=6))
     
-    AUG_ROUTINE= staticmethod(aug_routine)
+    AUG_ROUTINE= None #staticmethod(aug_routine)
     TILE_AUGMENTS=augments
 
     COORDS = np.load("coordinates/1-36-256-255.npy", allow_pickle=True)
@@ -151,7 +155,7 @@ class CoordsConfig(object):
     
     # the maximum number of tiles to use, has to be 0<= MAX_TILES <= num_tiles
     # where num_tiles is specified in the coordinate file
-    MAX_TILES= 25
+    MAX_TILES= 36
     
     # set this number to the desired image size (CANNOT BE CHOSEN FREELY
     # WHEN USING COORDINATE FILES)
@@ -210,11 +214,27 @@ def create_split(config):
 
     return fold_df
 
-
 if __name__ == "__main__":
-        
-    config = CoordsConfig()
 
+    
+    config = CoordsConfig()
+    LR_START = 1e-5
+    LR_MAX = config.LEARNING_RATE
+    LR_MIN = 0.000001
+    LR_RAMPUP_EPOCHS = 2
+    LR_SUSTAIN_EPOCHS = 1
+    LR_EXP_DECAY = .92
+
+    def lrfn(epoch):
+        if epoch < LR_RAMPUP_EPOCHS:
+            lr = (LR_MAX - LR_START) / LR_RAMPUP_EPOCHS * epoch + LR_START
+        elif epoch < LR_RAMPUP_EPOCHS + LR_SUSTAIN_EPOCHS:
+            lr = LR_MAX
+        else:
+            lr = (LR_MAX - LR_MIN) * LR_EXP_DECAY**(epoch - LR_RAMPUP_EPOCHS - LR_SUSTAIN_EPOCHS) + LR_MIN
+        return lr
+        
+    lr_callback = tf.keras.callbacks.LearningRateScheduler(lrfn, verbose=True)   
     # seed, fp16 training,
     # Reproducibility, but mind individual tensorflow OPS (layers)
 
@@ -252,7 +272,7 @@ if __name__ == "__main__":
     
     # create model instance with all needed args for compile
     # i.e. model, metric, optimizer, loss
-    network = Network(model(config.MAX_TILES, config.SZ), 
+    network = Network(model(1536,1536), 
                       num_classes=config.NUM_CLASSES,
                       sparse_labels=True,
                       regression=True,
@@ -338,9 +358,9 @@ if __name__ == "__main__":
                                  val_data.df['isup_grade'],
                                  file_path=weights_fname
                                  )
-        custom_callbacks = [cohen_kappa, lrreducer]
+        custom_callbacks = [cohen_kappa, lr_callback]
         
-        network.load_weights('EfficientNetB0_tileV2_1_20200702-024927_0_epoch.h5')
+        #network.load_weights('EfficientNetB0_bigimg_softmax_1_20200711-215824_0_epoch.h5')
         
         # Train the network
         network.train(

@@ -18,15 +18,16 @@ from utils.utils import set_gpu_memory, seed_all
 
 # directories
 
-IMG_DIR = Path('../data/train_images/')
+IMG_DIR = Path('../data/train_images')
 DATA_DIR = '../data/'
 train_csv = pd.read_csv('../data/train.csv')
+train_csv_path = '../data/train.csv'
 NFOLDS=5
 SEED=5
 
 TIFF_LEVEL = 1
-N = 48
-SZ = 256
+N = 16
+SZ = 512
 PAD_VAL=255
 PROVIDER='PANDA'
 
@@ -36,9 +37,9 @@ seed_all(SEED)
 skip_df = pd.read_csv(Path(DATA_DIR) / Path('PANDA_Suspicious_Slides_15_05_2020.csv'))
 print("possible faulty slide reasons", skip_df['reason'].unique())
 
-fold_df = PandasDataLoader(images_csv_path=Path(DATA_DIR) / Path('train.csv'),
-                           skip_csv=Path(DATA_DIR) / Path('PANDA_Suspicious_Slides_15_05_2020.csv'), 
-                           skip_list=["Background only", "tiss", "blank"]) #["marks", "Background only", "tiss", "blank"]
+fold_df = PandasDataLoader(images_csv_path=train_csv_path,
+                           skip_csv=None) #Path(DATA_DIR) / Path('PANDA_Suspicious_Slides_15_05_2020.csv'), 
+                           #skip_list=["Background only", "tiss", "blank"]) #["marks", "Background only", "tiss", "blank"]
 
 # we create a possible stratification here, the options are by isup grade, or further distilled by isup grade and data provider
 # stratified_isup_sample or stratified_isup_dp_sample, we use the former.
@@ -100,7 +101,10 @@ def image_example(image_string, row_df):
 
     return tf.train.Example(features=tf.train.Features(feature=feature))
     
-    
+for i in range(0,NFOLDS):
+    part_df = fold_df[fold_df['split']==i]
+    print(len(part_df))
+
 for i in range(0,NFOLDS):
     print("writing fold", i)
     part_df = fold_df[fold_df['split']==i]
@@ -112,7 +116,7 @@ for i in range(0,NFOLDS):
             img = skimage.io.MultiImage(str(path))[TIFF_LEVEL]
             tiles = tile(img, SZ, N, PAD_VAL)
             tiles = [x['img'] for x in tiles]
-            bigimg = tf.io.encode_jpeg(tile2mat(np.array(tiles), 8, 6), quality=100)
+            bigimg = tf.io.encode_jpeg(tile2mat(np.array(tiles), 4, 4), quality=100)
             example = image_example(bigimg, row)
             writer.write(example.SerializeToString())
         print("done writing file")
